@@ -1,4 +1,3 @@
-/// <reference lib="webworker" />
 import {
   AutoProcessor,
   Florence2ForConditionalGeneration,
@@ -6,7 +5,13 @@ import {
   env,
 } from '@huggingface/transformers';
 
-declare const self: DedicatedWorkerGlobalScope;
+type LocalAdapter = { features?: { has: (name: string) => boolean } }
+type LocalGpu = { requestAdapter: (options?: unknown) => Promise<LocalAdapter | null> }
+declare const self: {
+  postMessage: (message: WorkerResponse) => void
+  addEventListener: (type: 'message', listener: (event: MessageEvent) => void) => void
+  navigator: Navigator & { gpu?: LocalGpu }
+}
 
 const MODEL_ID = 'onnx-community/Florence-2-base-ft';
 const OCR_TASK = '<OCR_WITH_REGION>';
@@ -47,12 +52,12 @@ function progress(id: number, fraction: number, stage: string): void {
 }
 
 async function chooseBackend(): Promise<{ device: 'webgpu' | 'wasm'; dtype: Record<string, string> }> {
-  const gpu = (self.navigator as Navigator & { gpu?: GPU }).gpu;
+  const gpu = self.navigator.gpu;
   if (gpu) {
     try {
       const adapter = await gpu.requestAdapter({ powerPreference: 'high-performance' });
       if (adapter) {
-        const f16 = adapter.features.has('shader-f16');
+        const f16 = adapter.features?.has('shader-f16') === true;
         return {
           device: 'webgpu',
           dtype: f16

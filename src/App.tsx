@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ArrowDownToLine, ArrowUpRight, Bell, Box, ChartNoAxesCombined, ChevronDown,
   CircleHelp, LayoutDashboard, Menu, Package, Plus, Search, Settings,
@@ -49,6 +49,14 @@ let activeCurrency = 'EUR'
 const money = (value: number) => new Intl.NumberFormat('de-DE', { style: 'currency', currency: activeCurrency }).format(value)
 const profit = (p: Product) => p.salePrice - p.purchasePrice - p.shipping - p.fees
 
+function splitMoneyAmount(total: number, count: number): number[] {
+  const safeCount = Math.max(1, Math.floor(count))
+  const cents = Math.round(total * 100)
+  const base = Math.trunc(cents / safeCount)
+  const remainder = cents - base * safeCount
+  return Array.from({ length: safeCount }, (_, index) => (base + (index < Math.abs(remainder) ? Math.sign(remainder) : 0)) / 100)
+}
+
 function normalizeProductUnits(records: Array<Partial<Product>>): Product[] {
   const units: Product[] = []
   for (const item of records) {
@@ -77,16 +85,20 @@ function normalizeProductUnits(records: Array<Partial<Product>>): Product[] {
       units.push({ id, ...common, purchasePrice, salePrice, shipping, fees })
       continue
     }
-    // Legacy records stored the total line amount alongside a quantity. Split that
-    // amount equally so each physical unit can be sold and accounted for separately.
+    // Legacy records stored totals alongside quantity. Split to cents and distribute
+    // any remainder so the sum of the new unit values remains exactly the old total.
+    const purchaseParts = splitMoneyAmount(purchasePrice, count)
+    const saleParts = splitMoneyAmount(salePrice, count)
+    const shippingParts = splitMoneyAmount(shipping, count)
+    const feeParts = splitMoneyAmount(fees, count)
     for (let index = 0; index < count; index++) {
       units.push({
         id: index === 0 ? id : crypto.randomUUID(),
         ...common,
-        purchasePrice: purchasePrice / count,
-        salePrice: salePrice / count,
-        shipping: shipping / count,
-        fees: fees / count,
+        purchasePrice: purchaseParts[index],
+        salePrice: saleParts[index],
+        shipping: shippingParts[index],
+        fees: feeParts[index],
       })
     }
   }
@@ -881,7 +893,7 @@ function ProductTable({ products, onEdit, onDelete, onSell, onReceipt }: { produ
         ? inStock.length + ' auf Lager · ' + soldItems.length + ' verkauft'
         : inStock.length ? 'Auf Lager' : 'Verkauft'
       const statusClass = inStock.length && soldItems.length ? 'mixed' : inStock.length ? 'stock' : 'sold'
-      return <React.Fragment key={key}>
+      return <Fragment key={key}>
         <tr className="product-group-row">
           <td><div className="product-name">
             <button className="group-expand" aria-label={expanded ? 'Exemplare zuklappen' : 'Exemplare ausklappen'} aria-expanded={expanded} onClick={() => setExpandedGroups(current => ({ ...current, [key]: !current[key] }))}><ChevronDown size={15}/></button>
@@ -899,7 +911,7 @@ function ProductTable({ products, onEdit, onDelete, onSell, onReceipt }: { produ
           <td><button className="group-count-button" onClick={() => setExpandedGroups(current => ({ ...current, [key]: !current[key] }))}>{expanded ? 'Zuklappen' : 'Details'} <ChevronDown size={13}/></button></td>
         </tr>
         {expanded && items.map((item, index) => renderUnitRow(item, key, 'Exemplar ' + (index + 1)))}
-      </React.Fragment>
+      </Fragment>
     })}
   </tbody></table></div>
 }
@@ -1147,8 +1159,8 @@ function ProductModal({ product, onClose, onSave }: {
       products = selectedLines.flatMap(line => {
         const count = Math.max(1, Math.floor(Number(line.quantity) || 1))
         const groupId = crypto.randomUUID()
-        const unitPurchasePrice = Number(line.amount || 0) / count
-        return Array.from({ length: count }, () => ({
+        const unitPrices = splitMoneyAmount(Number(line.amount || 0), count)
+        return Array.from({ length: count }, (_, index) => ({
           id: crypto.randomUUID(),
           groupId,
           name: line.description.trim(),
@@ -1157,7 +1169,7 @@ function ProductModal({ product, onClose, onSave }: {
           shipping: 0,
           fees: 0,
           status: 'Auf Lager' as Status,
-          purchasePrice: Number(unitPurchasePrice.toFixed(2)),
+          purchasePrice: unitPrices[index],
           quantity: 1,
           imageUrl: line.imageUrl,
           imageAttribution: line.imageAttribution,
@@ -1179,8 +1191,8 @@ function ProductModal({ product, onClose, onSave }: {
     } else {
       const count = Math.max(1, Math.floor(Number(quantity) || 1))
       const groupId = crypto.randomUUID()
-      const unitPurchasePrice = Number(purchasePrice) / count
-      products = Array.from({ length: count }, () => ({
+      const unitPrices = splitMoneyAmount(Number(purchasePrice), count)
+      products = Array.from({ length: count }, (_, index) => ({
         id: crypto.randomUUID(),
         groupId,
         name: name.trim(),
@@ -1189,7 +1201,7 @@ function ProductModal({ product, onClose, onSave }: {
         shipping: 0,
         fees: 0,
         status: 'Auf Lager' as Status,
-        purchasePrice: Number(unitPurchasePrice.toFixed(2)),
+        purchasePrice: unitPrices[index],
         quantity: 1,
         imageUrl,
         imageAttribution,

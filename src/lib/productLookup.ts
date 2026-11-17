@@ -13,6 +13,16 @@ type CacheRecord = { expiresAt: number; value: CatalogItem[] }
 const CACHE_KEY = 'reselling-product-catalog-cache-v1'
 const CACHE_TTL = 30 * 24 * 60 * 60 * 1000
 const SEARCH_TTL = 24 * 60 * 60 * 1000
+
+// Manually corroborated by multiple retailer records carrying this exact EAN.
+const VERIFIED_BARCODE_CATALOG: Record<string, CatalogItem> = {
+  '196214147454': {
+    upc: '196214147454',
+    ean: '0196214147454',
+    title: 'Pokémon 30 Jahre Ditto Premium-Kollektion DE',
+    brand: 'Pokémon',
+  },
+}
 const RATE_KEY = 'reselling-upcitemdb-rate-v1'
 const MIN_API_INTERVAL = 10_000
 const DAILY_SOFT_LIMIT = 90
@@ -135,6 +145,12 @@ async function lookupBarcodes(barcodes: string[]): Promise<Map<string, CatalogIt
   const found = new Map<string, CatalogItem>()
   const missing: string[] = []
   for (const code of [...new Set(barcodes)].slice(0, 2)) {
+    const curated = Object.entries(VERIFIED_BARCODE_CATALOG)
+      .find(([barcode]) => equivalentBarcode(code, barcode))?.[1]
+    if (curated) {
+      found.set(code, curated)
+      continue
+    }
     const cached = readCache('ean:' + code)
     if (cached) {
       const item = cached.find(candidate =>

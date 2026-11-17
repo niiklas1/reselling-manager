@@ -1087,7 +1087,9 @@ function ProductModal({ product, onClose, onSave }: {
       }
       setOcrText(verifiedExtraction.text)
       if (verifiedExtraction.date) setPurchaseDate(verifiedExtraction.date)
-      if (verifiedExtraction.lineItems.length > 1 || verifiedExtraction.lineItems.some(line => line.confidence < 0.72)) {
+      if (verifiedExtraction.lineItems.length > 1 || verifiedExtraction.lineItems.some(line =>
+        line.confidence < 0.72 || line.productVerification === 'name' || (line.barcode && !line.productVerified)
+      )) {
         const initialLines: InvoiceDraftLine[] = verifiedExtraction.lineItems.map(line => ({
           ...line,
           selected: line.productVerification === 'barcode' || (!line.barcode && !line.productVerification && line.confidence >= 0.72),

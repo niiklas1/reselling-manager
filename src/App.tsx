@@ -6,7 +6,7 @@ import {
   CalendarDays, Tag, Truck, CheckCircle2, LoaderCircle, DollarSign,
   Camera, FileText, FileUp, ImagePlus, Moon, Sun, ExternalLink, RefreshCw, HardDrive
 } from 'lucide-react'
-import { readInvoiceFile, type InvoiceLineItem } from './lib/invoiceScanner'
+import { readInvoiceSource, type InvoiceLineItem } from './lib/invoiceScanner'
 import { enrichInvoiceProductNames } from './lib/productLookup'
 import { googleImagesUrl, searchProductImages, type ProductImageResult } from './lib/productImages'
 
@@ -1074,7 +1074,7 @@ function ProductModal({ product, onClose, onSave }: {
     setScanStage('Beleg wird vorbereitet')
     setInvoiceLines([])
     try {
-      const extracted = await readInvoiceFile(file, (progress, stage) => {
+      const extracted = await readInvoiceSource(file, (progress, stage) => {
         setScanProgress(Math.round(progress * 100))
         setScanStage(stage)
       })
@@ -1230,10 +1230,10 @@ function ProductModal({ product, onClose, onSave }: {
     <div className="modal-header"><div><span className="overline">{product ? 'INVENTAR' : 'NEUES INVENTAR'}</span><h2>{product ? 'Produkt bearbeiten' : 'Produkt hinzufügen'}</h2><p>{product ? 'Passe Produktdaten, Stückzahl und Beleg an.' : 'Starte mit einem Kassenbon, einer Rechnung oder der manuellen Erfassung.'}</p></div><button className="modal-close" onClick={onClose} disabled={saving}><X size={19}/></button></div>
     <div className="invoice-entry">
       <input ref={cameraInput} type="file" accept="image/*" capture="environment" hidden onChange={e => { void handleInvoiceFile(e.target.files?.[0]); e.currentTarget.value = '' }}/>
-      <input ref={fileInput} type="file" accept="application/pdf,image/jpeg,image/png,image/webp" hidden onChange={e => { void handleInvoiceFile(e.target.files?.[0]); e.currentTarget.value = '' }}/>
+      <input ref={fileInput} type="file" accept="application/pdf,image/jpeg,image/png,image/webp,.eml,message/rfc822" hidden onChange={e => { void handleInvoiceFile(e.target.files?.[0]); e.currentTarget.value = '' }}/>
       {selection && <div className="invoice-choice-grid">
         <button type="button" className="invoice-choice featured" onClick={() => cameraInput.current?.click()}><span className="invoice-choice-icon"><Camera size={22}/></span><strong>Rechnung scannen</strong><small>Kamera öffnen und Beleg fotografieren</small><span className="choice-cta">Kamera starten <ExternalLink size={13}/></span></button>
-        <button type="button" className="invoice-choice" onClick={() => fileInput.current?.click()}><span className="invoice-choice-icon"><FileUp size={22}/></span><strong>Datei hochladen</strong><small>PDF, JPG, PNG oder WebP auswählen</small><span className="choice-cta">Datei wählen <ExternalLink size={13}/></span></button>
+        <button type="button" className="invoice-choice" onClick={() => fileInput.current?.click()}><span className="invoice-choice-icon"><FileUp size={22}/></span><strong>Datei hochladen</strong><small>PDF, Bild oder E-Mail-Datei (.eml) auswählen</small><span className="choice-cta">Datei wählen <ExternalLink size={13}/></span></button>
         <button type="button" className="invoice-manual" onClick={() => setShowForm(true)}>Ohne Beleg manuell starten</button>
       </div>}
       {!selection && <div className="invoice-toolbar"><div className="invoice-file-status">{invoiceFile ? <><FileText size={16}/><span>{invoiceFile.name}</span></> : receiptPath ? <><FileText size={16}/><span>Beleg bereits gespeichert</span>{receiptUrl && <a href={receiptUrl} target="_blank" rel="noreferrer">Ansehen</a>}</> : <><FileText size={16}/><span>Kein Beleg angehängt</span></>}</div><div className="invoice-toolbar-actions"><button type="button" onClick={() => cameraInput.current?.click()}><Camera size={14}/> Scannen</button><button type="button" onClick={() => fileInput.current?.click()}><FileUp size={14}/> Datei</button></div></div>}

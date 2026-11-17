@@ -38,22 +38,22 @@ function emailBodyText(email: ParsedEmail): string {
 }
 
 function rawSinglePartBody(rawEmail: string): string {
-  const separator = /\\r?\\n\\r?\\n/
+  const separator = /\r?\n\r?\n/
   const match = separator.exec(rawEmail)
   if (!match || match.index === undefined) return ''
   const headers = rawEmail.slice(0, match.index)
-  const contentType = headers.match(/^content-type:\\s*([^;\\r\\n]+)/im)?.[1]?.trim().toLowerCase()
+  const contentType = headers.match(/^content-type:\s*([^;\r\n]+)/im)?.[1]?.trim().toLowerCase()
   // Multipart and encoded bodies must be decoded by PostalMime, not guessed here.
   if (contentType?.startsWith('multipart/') || !['text/plain', 'text/html'].includes(contentType || '')) return ''
-  if (/^content-transfer-encoding:\\s*(?:base64|quoted-printable)/im.test(headers)) return ''
+  if (/^content-transfer-encoding:\s*(?:base64|quoted-printable)/im.test(headers)) return ''
   const body = rawEmail.slice(match.index + match[0].length).trim()
   return contentType === 'text/html' ? htmlInvoiceText(body) : body
 }
 
 function normalizeEmailInvoiceLabels(text: string): string {
-  return text.split(/\\r?\\n/)
-    .map(line => line.replace(/^\\s*(?:artikel|produkt|item|description|bezeichnung)\\s*[:|]\\s*/i, ''))
-    .join('\\n')
+  return text.split(/\r?\n/)
+    .map(line => line.replace(/^\s*(?:artikel|produkt|item|description|bezeichnung)\s*[:|]\s*/i, ''))
+    .join('\n')
 }
 
 function attachmentFile(attachment: ParsedEmail['attachments'][number], index: number): File | null {

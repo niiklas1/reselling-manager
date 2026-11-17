@@ -170,6 +170,9 @@ function extractDescription(line: string, prices: MoneyToken[]): string {
   const firstPrice = prices[0]
   const beforePrice = firstPrice ? line.slice(0, firstPrice.index) : line
   return beforePrice
+    // Some OCR runs invent a short isolated prefix before the real product name.
+    // Remove only known noise tokens; common genuine prefixes (EA, LG, HP, PS) stay intact.
+    .replace(/^\s*(?:EQ|E0|Q0|OQ|QG|OG)\b[\s:|,;./]+/i, '')
     .replace(/^\s*(?:pos\.?\s*)?\d{1,3}[.)#:-]?\s+/i, '')
     .replace(/\b(?:qty|quantity|menge|anzahl)\s*[:=]?\s*\d{1,4}\b/ig, ' ')
     .replace(/\b\d{1,4}\s*(?:x|×|stk\.?|stück|pcs?\.?|st\.?)\b/ig, ' ')

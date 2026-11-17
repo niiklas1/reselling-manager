@@ -125,3 +125,14 @@ test('does not attach a barcode with an invalid check digit', () => {
   assert.equal(result.lineItems.length, 1)
   assert.equal(result.lineItems[0].barcode, undefined)
 })
+
+
+test('removes invented short OCR prefixes but preserves real product-name prefixes', () => {
+  const noisy = parseInvoiceText('EQ Pokémon 30 Jahre Ditto Premium Collection 46,99')
+  assert.equal(noisy.lineItems.length, 1)
+  assert.equal(noisy.lineItems[0].description, 'Pokémon 30 Jahre Ditto Premium Collection')
+
+  const realBrand = parseInvoiceText('EA Sports FC 25 69,99')
+  assert.equal(realBrand.lineItems.length, 1)
+  assert.equal(realBrand.lineItems[0].description, 'EA Sports FC 25')
+})

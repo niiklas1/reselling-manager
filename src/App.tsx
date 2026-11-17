@@ -276,9 +276,9 @@ async function extractZipFromPdf(file: File): Promise<Uint8Array> {
 
 function pdfSafeText(value: string): string {
   return value.normalize('NFKD')
-    .replace(/[\\u0300-\\u036f]/g, '')
+    .replace(/[\u0300-\u036f]/g, '')
     .replace(/[–—•·]/g, '-')
-    .replace(/[^\\x20-\\x7E]/g, '?')
+    .replace(/[^\x20-\x7E]/g, '?')
 }
 
 async function createBackupPdf(archive: Blob, products: Product[], receiptCount: number): Promise<File> {
@@ -302,7 +302,7 @@ async function createBackupPdf(archive: Blob, products: Product[], receiptCount:
   const addPage = () => { page = pdf.addPage(pageSize); y = 790 }
   const write = (raw: string, size = 9, font = regular, color = ink, indent = 0) => {
     const text = pdfSafeText(raw)
-    const words = text.split(/\\s+/).filter(Boolean)
+    const words = text.split(/\s+/).filter(Boolean)
     const lineHeight = size + 4
     let line = ''
     const draw = (value: string) => {
@@ -400,6 +400,10 @@ function App() {
   activeCurrency = currency
 
   useEffect(() => {
+    void navigator.storage?.persist?.().catch(() => false)
+  }, [])
+
+  useEffect(() => {
     localStorage.setItem('reselling-currency', currency)
     activeCurrency = currency
   }, [currency])
@@ -451,6 +455,8 @@ function App() {
         if (key) storedValues[key] = localStorage.getItem(key) ?? ''
       }
       storedValues[PRODUCTS_STORAGE_KEY] = JSON.stringify(backupProducts)
+      storedValues['reselling-currency'] = currency
+      storedValues['reselling-theme'] = theme
 
       const manifest: ResellingBackupV3 = {
         format: 'reselling-manager-backup',
@@ -605,6 +611,12 @@ function App() {
         throw storageError
       }
 
+      if (storageSnapshot) {
+        const restoredCurrency = storageSnapshot['reselling-currency']
+        const restoredTheme = storageSnapshot['reselling-theme']
+        if (restoredCurrency && ['EUR', 'USD', 'GBP', 'CHF'].includes(restoredCurrency)) setCurrency(restoredCurrency)
+        if (restoredTheme === 'light' || restoredTheme === 'dark') setTheme(restoredTheme)
+      }
       setProducts(finalProducts)
       restoreCommitted = true
       await removeLocalReceiptsExcept(createdPaths.map(path => path.slice(6))).catch(() => undefined)

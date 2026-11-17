@@ -12,11 +12,13 @@ import { enrichInvoiceProductNames } from './lib/productLookup'
 import { googleImagesUrl, searchProductImages, type ProductImageResult } from './lib/productImages'
 
 type Status = 'Auf Lager' | 'Verkauft'
+const PRODUCT_CATEGORIES = ['Elektronik', 'TCG', 'Alternative'] as const
+type ProductCategory = typeof PRODUCT_CATEGORIES[number]
 type Product = {
   id: string
   groupId?: string
   name: string
-  category: string
+  category: ProductCategory | ''
   platform: string
   purchasePrice: number
   salePrice: number
@@ -59,6 +61,15 @@ function splitMoneyAmount(total: number, count: number): number[] {
   return Array.from({ length: safeCount }, (_, index) => (base + (index < Math.abs(remainder) ? Math.sign(remainder) : 0)) / 100)
 }
 
+function normalizeProductCategory(value: unknown): ProductCategory | '' {
+  if (typeof value !== 'string' || !value.trim()) return ''
+  const category = value.trim().toLocaleLowerCase('de-DE').replace(/\s+/g, ' ')
+  if (['elektronik', 'electronics', 'electronic', 'elektronikartikel'].includes(category)) return 'Elektronik'
+  if (['tcg', 'trading card game', 'trading card games', 'trading cards', 'sammelkarten', 'pokemon', 'pokémon'].includes(category)) return 'TCG'
+  if (['alternative', 'alternativ'].includes(category)) return 'Alternative'
+  return 'Alternative'
+}
+
 function normalizeProductUnits(records: Array<Partial<Product>>): Product[] {
   const units: Product[] = []
   for (const item of records) {
@@ -72,7 +83,7 @@ function normalizeProductUnits(records: Array<Partial<Product>>): Product[] {
     const common = {
       groupId,
       name: item.name || '',
-      category: item.category || '',
+      category: normalizeProductCategory(item.category),
       platform: item.platform || '',
       purchaseDate: item.purchaseDate || '',
       saleDate: item.saleDate || '',
@@ -426,6 +437,7 @@ function App() {
   const [products, setProducts] = useState<Product[]>(readStoredProducts())
   const [search, setSearch] = useState('')
   const [filter, setFilter] = useState<'Alle' | Status>('Alle')
+  const [categoryFilter, setCategoryFilter] = useState<ProductCategory | 'Alle'>('Alle')
   const [showForm, setShowForm] = useState(false)
   const [editing, setEditing] = useState<Product | null>(null)
   const [selling, setSelling] = useState<Product | null>(null)
@@ -694,8 +706,10 @@ function App() {
 
   const visibleProducts = useMemo(() => products.filter(p => {
     const matchesSearch = [p.name, p.category, p.platform].join(' ').toLowerCase().includes(search.toLowerCase())
-    return matchesSearch && (filter === 'Alle' || p.status === filter)
-  }), [products, search, filter])
+    const matchesStatus = filter === 'Alle' || p.status === filter
+    const matchesCategory = categoryFilter === 'Alle' || p.category === categoryFilter
+    return matchesSearch && matchesStatus && matchesCategory
+  }), [products, search, filter, categoryFilter])
 
   async function saveProduct(batch: Product[], invoiceFile?: File | null): Promise<boolean> {
     if (batch.length === 0) return false
@@ -804,7 +818,7 @@ function App() {
           {section === 'Produkte' && (
             <>
               <div className="page-header"><div><div className="overline">INVENTAR VERWALTEN</div><h1>Produkte</h1><p>Verwalte deine Einkäufe, Bestände und Verkäufe.</p></div><button className="button-primary" onClick={openNew}><Plus size={17}/> Produkt hinzufügen</button></div>
-              <div className="panel inventory-panel"><div className="inventory-toolbar"><div className="search-box"><Search size={17}/><input value={search} onChange={e => setSearch(e.target.value)} placeholder="Produkte suchen..."/></div><div className="filter-control"><SlidersHorizontal size={16}/><select value={filter} onChange={e => setFilter(e.target.value as typeof filter)}><option>Alle</option><option>Auf Lager</option><option>Verkauft</option></select></div></div>
+              <div className="panel inventory-panel"><div className="inventory-toolbar"><div className="search-box"><Search size={17}/><input value={search} onChange={e => setSearch(e.target.value)} placeholder="Produkte suchen..."/></div><div className="filter-controls"><div className="filter-control"><SlidersHorizontal size={16}/><select aria-label="Status filtern" value={filter} onChange={e => setFilter(e.target.value as typeof filter)}><option>Alle</option><option>Auf Lager</option><option>Verkauft</option></select></div><div className="filter-control"><Tag size={16}/><select aria-label="Kategorie filtern" value={categoryFilter} onChange={e => setCategoryFilter(e.target.value as ProductCategory | 'Alle')}><option value="Alle">Alle Kategorien</option>{PRODUCT_CATEGORIES.map(category => <option key={category} value={category}>{category}</option>)}</select></div></div></div>
                 {visibleProducts.length ? <ProductTable products={visibleProducts} onEdit={editProduct} onDelete={deleteProduct} onSell={setSelling} onReceipt={setReceiptProduct}/> : <EmptyState icon={<Package size={22}/>} title={products.length ? 'Keine Produkte gefunden' : 'Noch keine Produkte vorhanden'} text={products.length ? 'Passe deine Suche oder den Filter an.' : 'Füge dein erstes Produkt hinzu, um deinen Bestand aufzubauen.'} action={!products.length ? <button className="button-secondary" onClick={openNew}><Plus size={15}/> Produkt anlegen</button> : undefined}/>}
               </div>
             </>
@@ -977,7 +991,7 @@ function ProductModal({ product, onClose, onSave }: {
   onSave: (products: Product[], invoiceFile?: File | null) => Promise<boolean>
 }) {
   const [name, setName] = useState(product?.name || '')
-  const [category, setCategory] = useState(product?.category || '')
+  const [category, setCategory] = useState<ProductCategory | ''>(product?.category || '')
   const [platform, setPlatform] = useState(product?.platform || '')
   const [purchasePrice, setPurchasePrice] = useState(product?.purchasePrice.toString() || '')
   const [purchaseDate, setPurchaseDate] = useState(product?.purchaseDate || new Date().toISOString().slice(0,10))
@@ -1274,7 +1288,7 @@ function ProductModal({ product, onClose, onSave }: {
           {imageOptionsVisible && <div className="image-suggestions">{imageResults.map(item => <button type="button" key={item.id} className={imageUrl === item.url ? 'image-choice-thumb chosen' : 'image-choice-thumb'} onClick={() => {setImageUrl(item.url);setImageAttribution(item.creator);setImageLicense(item.license);setImageOptionsVisible(false)}}><img src={item.thumbnail} alt={item.title}/><span>{item.creator || item.title}</span></button>)}</div>}
         </div>
       </>}
-      <label className="field"><span>Kategorie</span><input value={category} onChange={e=>setCategory(e.target.value)} placeholder="z. B. Trading Cards"/></label>
+      <label className="field"><span>Kategorie *</span><select required value={category} onChange={e => setCategory(e.target.value as ProductCategory | '')}><option value="">Kategorie auswählen</option>{PRODUCT_CATEGORIES.map(option => <option key={option} value={option}>{option}</option>)}</select></label>
       <label className="field"><span>Einkaufsdatum</span><input type="date" value={purchaseDate} onChange={e=>setPurchaseDate(e.target.value)}/></label>
       <label className="field"><span>Plattform</span><select value={platform} onChange={e=>setPlatform(e.target.value)}><option value="">Bitte wählen</option><option>eBay</option><option>Kleinanzeigen</option><option>Vinted</option><option>Cardmarket</option><option>Facebook Marketplace</option><option>Sonstige</option></select></label>
       <div className="form-note full"><Package size={15}/> Das Produkt wird zunächst als Bestand gespeichert. Den Verkauf kannst du später direkt im Inventar eintragen.</div>

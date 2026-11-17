@@ -108,7 +108,7 @@ function parseMoneyMatches(line: string): Array<{ value: number; index: number }
 function parseLineItems(lines: string[]): InvoiceLineItem[] {
   // Be deliberately conservative: only keep rows that look like actual merchandise,
   // not payment details, totals, contact information, or receipt metadata.
-  const excluded = /\\b(gesamtbetrag|rechnungsbetrag|endbetrag|zu zahlen|zahlbetrag|zwischensumme|summe|total|brutto|netto|mwst|ust\\.?|mehrwertsteuer|steuerbetrag|rückgeld|gegeben|kartenzahlung|barzahlung|ec[- ]?karte|kreditkarte|visa|mastercard|paypal|zahlung|bezahlt|gutschein|rabatt|versandkosten|lieferkosten|porto|pfand|kaution|anzahlung|gebühr|gebuehr|transaktionsnummer|autorisierung|terminal|kasse|bonnummer|belegnummer|rechnungsnummer|kundennummer|bestellnummer|auftragsnummer|lieferant|rechnung|quittung|kassenbon|datum|uhrzeit|telefon|tel\\.?|fax|email|e-mail|www\\.|http|iban|bic|filiale|straße|str\\.?|plz|adresse|kontakt|seite \\d|seite von)/i
+  const excluded = /\b(gesamtbetrag|rechnungsbetrag|endbetrag|zu zahlen|zahlbetrag|zwischensumme|summe|total|brutto|netto|mwst|ust\.?|mehrwertsteuer|steuerbetrag|rückgeld|gegeben|kartenzahlung|barzahlung|ec[- ]?karte|kreditkarte|visa|mastercard|paypal|zahlung|bezahlt|gutschein|rabatt|versandkosten|lieferkosten|porto|pfand|kaution|anzahlung|gebühr|gebuehr|transaktionsnummer|autorisierung|terminal|kasse|bonnummer|belegnummer|rechnungsnummer|kundennummer|bestellnummer|auftragsnummer|lieferant|rechnung|quittung|kassenbon|datum|uhrzeit|telefon|tel\.?|fax|email|e-mail|www\.|http|iban|bic|filiale|straße|str\.?|plz|adresse|kontakt|seite \d|seite von)/i
   const result: InvoiceLineItem[] = []
   for (const line of lines) {
     if (excluded.test(line)) continue
@@ -117,21 +117,21 @@ function parseLineItems(lines: string[]): InvoiceLineItem[] {
 
     const firstPrice = prices[0]
     let description = line.slice(0, firstPrice.index)
-      .replace(/^\\s*(?:\\d{1,3}[.)]\\s*|\\d{1,3}\\s*[x×]\\s*)/i, '')
+      .replace(/^\s*(?:\d{1,3}[.)]\s*|\d{1,3}\s*[x×]\s*)/i, '')
       .replace(/[|:;–-]+$/g, '')
-      .replace(/\\s+/g, ' ')
+      .replace(/\s+/g, ' ')
       .trim()
 
     // Product titles need readable words; this rejects stray totals, codes and OCR fragments.
     const words = description.match(/[A-Za-zÄÖÜäöüß]{2,}/g) || []
     const letters = (description.match(/[A-Za-zÄÖÜäöüß]/g) || []).length
-    const digits = (description.match(/\\d/g) || []).length
+    const digits = (description.match(/\d/g) || []).length
     if (description.length < 3 || words.length === 0 || letters < 3) continue
     if (digits > letters * 1.5) continue
-    if (/^(?:pos(?:ition)?|art(?:ikel)?(?:-?nr)?|sku|ean|barcode|nr\\.?|id)\\b/i.test(description)) continue
-    if (/^[A-Z0-9/_-]{2,18}$/i.test(description) && !/\\s/.test(description)) continue
+    if (/^(?:pos(?:ition)?|art(?:ikel)?(?:-?nr)?|sku|ean|barcode|nr\.?|id)\b/i.test(description)) continue
+    if (/^[A-Z0-9/_-]{2,18}$/i.test(description) && !/\s/.test(description)) continue
 
-    const quantityMatch = line.match(/\\b(\\d{1,3})\\s*(?:x|×|stk\\.?|stück|pcs?)\\b/i)
+    const quantityMatch = line.match(/\b(\d{1,3})\s*(?:x|×|stk\.?|stück|pcs?)\b/i)
     const quantity = quantityMatch ? Math.max(1, Number(quantityMatch[1])) : 1
     const amount = prices[prices.length - 1].value
     const unitPrice = prices.length > 1 ? prices[prices.length - 2].value : quantity > 1 ? amount : null

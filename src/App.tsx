@@ -3,7 +3,7 @@ import {
   ArrowDownToLine, ArrowUpRight, Bell, Box, ChartNoAxesCombined, ChevronDown,
   CircleHelp, LayoutDashboard, Menu, Package, Plus, Search, Settings,
   ShoppingBag, SlidersHorizontal, Sparkles, Wallet, X, Trash2, Pencil,
-  CalendarDays, Tag, Truck, CheckCircle2, LoaderCircle,
+  CalendarDays, Tag, Truck, CheckCircle2, LoaderCircle, DollarSign,
   Camera, FileText, FileUp, ImagePlus, Moon, Sun, ExternalLink, RefreshCw, HardDrive
 } from 'lucide-react'
 import { readInvoiceFile, type InvoiceLineItem } from './lib/invoiceScanner'
@@ -120,6 +120,28 @@ async function deleteLocalReceipt(path: string): Promise<void> {
   })
 }
 
+
+type BackupReceipt = { name: string; type: string; data: string }
+type ResellingBackup = { format: 'reselling-manager-backup'; version: 1; createdAt: string; products: Product[]; receipts: Record<string, BackupReceipt> }
+
+function blobToDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(String(reader.result))
+    reader.onerror = () => reject(new Error('Ein Beleg konnte nicht für das Backup gelesen werden.'))
+    reader.readAsDataURL(blob)
+  })
+}
+
+function dataUrlToBlob(dataUrl: string): Blob {
+  const match = /^data:([^;,]*);base64,([A-Za-z0-9+/=]+)$/.exec(dataUrl)
+  if (!match) throw new Error('Die Backup-Datei enthält einen ungültigen Beleg.')
+  const binary = atob(match[2])
+  const bytes = new Uint8Array(binary.length)
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
+  return new Blob([bytes], { type: match[1] || 'application/octet-stream' })
+}
+
 function App() {
   const [section, setSection] = useState<Section>('Übersicht')
   const [dataError, setDataError] = useState('')
@@ -128,8 +150,12 @@ function App() {
   const [filter, setFilter] = useState<'Alle' | Status>('Alle')
   const [showForm, setShowForm] = useState(false)
   const [editing, setEditing] = useState<Product | null>(null)
+  const [selling, setSelling] = useState<Product | null>(null)
   const [mobileNav, setMobileNav] = useState(false)
   const [showHelp, setShowHelp] = useState(false)
+  const [backupBusy, setBackupBusy] = useState(false)
+  const [backupMessage, setBackupMessage] = useState('')
+  const backupInput = useRef<HTMLInputElement>(null)
   const [theme, setTheme] = useState<'light' | 'dark'>(() => {
     const saved = localStorage.getItem('reselling-theme')
     return saved === 'light' ? 'light' : 'dark'
@@ -148,6 +174,72 @@ function App() {
     }
   }, [products])
 
+
+
+  async function createBackup() {
+    setBackupBusy(true)
+    setBackupMessage('')
+    try {
+      const receipts: Record<string, BackupReceipt> = {}
+      const receiptPaths = [...new Set(products.map(product => product.receiptPath).filter(path => path.startsWith('local:')))]
+      for (const path of receiptPaths) {
+        const blob = await readLocalReceipt(path)
+        if (!blob) throw new Error('Ein gespeicherter Beleg fehlt. Das Backup wurde abgebrochen, damit es nicht unvollständig ist.')
+        const name = blob instanceof File ? blob.name : 'beleg'
+        receipts[path] = { name, type: blob.type || 'application/octet-stream', data: await blobToDataUrl(blob) }
+      }
+      const backup: ResellingBackup = { format: 'reselling-manager-backup', version: 1, createdAt: new Date().toISOString(), products, receipts }
+      const blob = new Blob([JSON.stringify(backup)], { type: 'application/json' })
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = 'reselling-manager-backup-' + new Date().toISOString().slice(0, 10) + '.json'
+      document.body.appendChild(link)
+      link.click()
+      link.remove()
+      URL.revokeObjectURL(url)
+      setBackupMessage('Backup erstellt: ' + products.length + ' Produkte und ' + receiptPaths.length + ' Belege gesichert.')
+    } catch (error) {
+      setBackupMessage(error instanceof Error ? error.message : 'Backup konnte nicht erstellt werden.')
+    } finally {
+      setBackupBusy(false)
+    }
+  }
+
+  async function restoreBackup(file?: File) {
+    if (!file) return
+    setBackupBusy(true)
+    setBackupMessage('')
+    try {
+      const parsed = JSON.parse(await file.text()) as Partial<ResellingBackup>
+      if (parsed.format !== 'reselling-manager-backup' || parsed.version !== 1 || !Array.isArray(parsed.products) || !parsed.receipts || typeof parsed.receipts !== 'object') {
+        throw new Error('Diese Datei ist kein gültiges Reselling-Manager-Backup.')
+      }
+      if (!window.confirm('Das Backup ersetzt alle aktuell gespeicherten Produkte und Belege. Möchtest du fortfahren?')) return
+      const newPaths: Record<string, string> = {}
+      for (const [oldPath, receipt] of Object.entries(parsed.receipts)) {
+        if (!receipt || typeof receipt.data !== 'string' || typeof receipt.name !== 'string' || typeof receipt.type !== 'string') {
+          throw new Error('Das Backup enthält einen beschädigten Beleg. Deine bisherigen Daten bleiben erhalten.')
+        }
+        const blob = dataUrlToBlob(receipt.data)
+        newPaths[oldPath] = await saveLocalReceipt(new File([blob], receipt.name, { type: receipt.type }))
+      }
+      const restored = parsed.products.map(product => {
+        if (!product || typeof product.id !== 'string' || typeof product.name !== 'string') throw new Error('Das Backup enthält ungültige Produktdaten.')
+        const oldPath = typeof product.receiptPath === 'string' ? product.receiptPath : ''
+        if (oldPath.startsWith('local:') && !newPaths[oldPath]) throw new Error('Zu einem Produkt fehlt ein Beleg im Backup. Deine bisherigen Daten bleiben erhalten.')
+        return { ...product, receiptPath: newPaths[oldPath] || '' } as Product
+      })
+      localStorage.setItem(PRODUCTS_STORAGE_KEY, JSON.stringify(restored))
+      setProducts(restored)
+      setBackupMessage('Wiederherstellung erfolgreich: ' + restored.length + ' Produkte und ' + Object.keys(newPaths).length + ' Belege importiert.')
+    } catch (error) {
+      setBackupMessage(error instanceof Error ? error.message : 'Backup konnte nicht wiederhergestellt werden.')
+    } finally {
+      setBackupBusy(false)
+      if (backupInput.current) backupInput.current.value = ''
+    }
+  }
 
   const sold = products.filter(p => p.status === 'Verkauft')
   const stock = products.filter(p => p.status === 'Auf Lager')
@@ -189,6 +281,13 @@ function App() {
   }
 
   function editProduct(product: Product) { setEditing(product); setShowForm(true) }
+  function saveSale(values: { salePrice: number; shipping: number; fees: number; saleDate: string }) {
+    if (!selling) return
+    setProducts(current => current.map(item => item.id === selling.id
+      ? { ...item, ...values, status: 'Verkauft' as Status }
+      : item))
+    setSelling(null)
+  }
   async function deleteProduct(id: string) {
     if (!window.confirm('Möchtest du dieses Produkt wirklich löschen?')) return
     const productToDelete = products.find(product => product.id === id)
@@ -253,7 +352,7 @@ function App() {
                 <section className="panel quick-panel"><div className="panel-title-row"><div><h2>Schnellübersicht</h2><p>Deine offenen Bestände</p></div><Box size={18} className="muted-icon"/></div><div className="quick-row"><span>Stück auf Lager</span><strong>{stockUnits}</strong></div><div className="quick-row"><span>Verkaufte Produkte</span><strong>{sold.length}</strong></div><div className="quick-row"><span>Investiertes Kapital</span><strong>{money(investment)}</strong></div><button className="subtle-button" onClick={() => setSection('Produkte')}>Bestand ansehen <ArrowUpRight size={15}/></button></section>
               </div>
               <section className="panel recent-panel"><div className="panel-title-row"><div><h2>Zuletzt hinzugefügt</h2><p>Deine neuesten Produkte</p></div><button className="text-action" onClick={() => setSection('Produkte')}>Alle Produkte ansehen <ArrowUpRight size={14}/></button></div>
-                {products.length === 0 ? <EmptyState icon={<Package size={22}/>} title="Dein Reselling startet hier" text="Lege dein erstes Produkt an und behalte Einkauf, Verkauf und Gewinn im Blick." action={<button className="button-secondary" onClick={openNew}><Plus size={15}/> Erstes Produkt anlegen</button>}/> : <ProductTable products={products.slice(0, 5)} onEdit={editProduct} onDelete={deleteProduct}/>}
+                {products.length === 0 ? <EmptyState icon={<Package size={22}/>} title="Dein Reselling startet hier" text="Lege dein erstes Produkt an und behalte Einkauf, Verkauf und Gewinn im Blick." action={<button className="button-secondary" onClick={openNew}><Plus size={15}/> Erstes Produkt anlegen</button>}/> : <ProductTable products={products.slice(0, 5)} onEdit={editProduct} onDelete={deleteProduct} onSell={setSelling}/>}
               </section>
             </>
           )}
@@ -262,7 +361,7 @@ function App() {
             <>
               <div className="page-header"><div><div className="overline">INVENTAR VERWALTEN</div><h1>Produkte</h1><p>Verwalte deine Einkäufe, Bestände und Verkäufe.</p></div><button className="button-primary" onClick={openNew}><Plus size={17}/> Produkt hinzufügen</button></div>
               <div className="panel inventory-panel"><div className="inventory-toolbar"><div className="search-box"><Search size={17}/><input value={search} onChange={e => setSearch(e.target.value)} placeholder="Produkte suchen..."/></div><div className="filter-control"><SlidersHorizontal size={16}/><select value={filter} onChange={e => setFilter(e.target.value as typeof filter)}><option>Alle</option><option>Auf Lager</option><option>Verkauft</option></select></div></div>
-                {visibleProducts.length ? <ProductTable products={visibleProducts} onEdit={editProduct} onDelete={deleteProduct}/> : <EmptyState icon={<Package size={22}/>} title={products.length ? 'Keine Produkte gefunden' : 'Noch keine Produkte vorhanden'} text={products.length ? 'Passe deine Suche oder den Filter an.' : 'Füge dein erstes Produkt hinzu, um deinen Bestand aufzubauen.'} action={!products.length ? <button className="button-secondary" onClick={openNew}><Plus size={15}/> Produkt anlegen</button> : undefined}/>}
+                {visibleProducts.length ? <ProductTable products={visibleProducts} onEdit={editProduct} onDelete={deleteProduct} onSell={setSelling}/> : <EmptyState icon={<Package size={22}/>} title={products.length ? 'Keine Produkte gefunden' : 'Noch keine Produkte vorhanden'} text={products.length ? 'Passe deine Suche oder den Filter an.' : 'Füge dein erstes Produkt hinzu, um deinen Bestand aufzubauen.'} action={!products.length ? <button className="button-secondary" onClick={openNew}><Plus size={15}/> Produkt anlegen</button> : undefined}/>}
               </div>
             </>
           )}
@@ -271,17 +370,18 @@ function App() {
             <>
               <div className="page-header"><div><div className="overline">ABGESCHLOSSENE TRANSAKTIONEN</div><h1>Verkäufe</h1><p>Behalte Erlöse, Gebühren und tatsächliche Gewinne im Blick.</p></div></div>
               <div className="metric-grid compact-metrics"><Metric icon={<ShoppingBag size={19}/>} label="Verkäufe" value={String(sold.length)} detail="Abgeschlossene Verkäufe" tone="blue"/><Metric icon={<Wallet size={19}/>} label="Umsatz" value={money(revenue)} detail="Vor Abzug der Kosten" tone="violet"/><Metric icon={<TrendingUpIcon/>} label="Realisierter Gewinn" value={money(totalProfit)} detail="Nach erfassten Kosten" tone="green"/><Metric icon={<Truck size={19}/>} label="Gebühren & Versand" value={money(sold.reduce((s,p)=>s+p.fees+p.shipping,0))} detail="Erfasste Verkaufskosten" tone="amber"/></div>
-              <section className="panel"><div className="panel-title-row"><div><h2>Verkaufshistorie</h2><p>Alle als verkauft markierten Produkte</p></div></div>{sold.length ? <ProductTable products={sold} onEdit={editProduct} onDelete={deleteProduct}/> : <EmptyState icon={<ShoppingBag size={22}/>} title="Noch keine Verkäufe" text="Ändere bei einem Produkt den Status auf „Verkauft“, um es hier zu sehen." action={<button className="button-secondary" onClick={() => setSection('Produkte')}>Zu den Produkten</button>}/>}</section>
+              <section className="panel"><div className="panel-title-row"><div><h2>Verkaufshistorie</h2><p>Alle als verkauft markierten Produkte</p></div></div>{sold.length ? <ProductTable products={sold} onEdit={editProduct} onDelete={deleteProduct} onSell={setSelling}/> : <EmptyState icon={<ShoppingBag size={22}/>} title="Noch keine Verkäufe" text="Ändere bei einem Produkt den Status auf „Verkauft“, um es hier zu sehen." action={<button className="button-secondary" onClick={() => setSection('Produkte')}>Zu den Produkten</button>}/>}</section>
             </>
           )}
 
           {section === 'Auswertungen' && <section className="panel coming-panel"><div className="coming-icon"><Sparkles size={23}/></div><h2>Auswertungen</h2><p>Hier bauen wir deine Monatsübersichten, Gewinnentwicklung und Plattformvergleiche auf.</p><span className="coming-tag">WIRD ALS NÄCHSTES ERWEITERT</span></section>}
-          {section === 'Einstellungen' && <section className="panel settings-panel"><div className="panel-title-row"><div><h2>Lokaler Workspace</h2><p>Die App läuft ohne Konto, Anmeldung oder E-Mail-Versand.</p></div></div><div className="setting-row"><div><strong>Betriebsmodus</strong><span>Persönliche Nutzung auf diesem Gerät.</span></div><span className="setting-pill">Ohne Login</span></div><div className="setting-row"><div><strong>Erscheinungsbild</strong><span>Zwischen dem dunklen Neon-Look und dem hellen Design wechseln.</span></div><button className="setting-toggle" onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}>{theme === 'dark' ? <Sun size={15}/> : <Moon size={15}/>} {theme === 'dark' ? 'Helles Design' : 'Dark Mode'}</button></div><div className="setting-row"><div><strong>Datenspeicherung</strong><span>Produkte werden nur in diesem Browser gespeichert. Es gibt keine Cloud-Synchronisierung.</span></div><span className="setting-pill">Lokal</span></div><div className="setting-row"><div><strong>Belege</strong><span>PDFs und Bilder werden im lokalen Browserspeicher dieses Geräts abgelegt.</span></div><span className="setting-pill">Auf diesem Gerät</span></div><div className="setting-row"><div><strong>Währung</strong><span>Alle Beträge werden in Euro angezeigt.</span></div><span className="setting-pill">EUR (€)</span></div><div className="setting-row"><div><strong>App-Version</strong><span>Reselling Manager – Invoice Studio</span></div><span className="setting-pill">0.3.0 Local</span></div></section>}
+          {section === 'Einstellungen' && <section className="panel settings-panel"><div className="panel-title-row"><div><h2>Lokaler Workspace</h2><p>Die App läuft ohne Konto, Anmeldung oder E-Mail-Versand.</p></div></div><div className="setting-row"><div><strong>Betriebsmodus</strong><span>Persönliche Nutzung auf diesem Gerät.</span></div><span className="setting-pill">Ohne Login</span></div><div className="setting-row"><div><strong>Erscheinungsbild</strong><span>Zwischen dem dunklen Neon-Look und dem hellen Design wechseln.</span></div><button className="setting-toggle" onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}>{theme === 'dark' ? <Sun size={15}/> : <Moon size={15}/>} {theme === 'dark' ? 'Helles Design' : 'Dark Mode'}</button></div><div className="setting-row"><div><strong>Datenspeicherung</strong><span>Produkte werden nur in diesem Browser gespeichert. Es gibt keine Cloud-Synchronisierung.</span></div><span className="setting-pill">Lokal</span></div><div className="setting-row"><div><strong>Belege</strong><span>PDFs und Bilder werden im lokalen Browserspeicher dieses Geräts abgelegt.</span></div><span className="setting-pill">Auf diesem Gerät</span></div><div className="backup-section"><div className="backup-heading"><div><strong>Backup erstellen</strong><span>Sichere alle Produkte und Originalbelege in einer Datei. Die Datei kannst du später hier wieder hochladen.</span></div><HardDrive size={20}/></div><div className="backup-actions"><button className="button-primary" onClick={() => void createBackup()} disabled={backupBusy}><ArrowDownToLine size={15}/>{backupBusy ? 'Bitte warten …' : 'Backup-Datei erstellen'}</button><button className="button-secondary" onClick={() => backupInput.current?.click()} disabled={backupBusy}><FileUp size={15}/> Backup hochladen</button><input ref={backupInput} type="file" accept=".json,application/json" hidden onChange={e => void restoreBackup(e.target.files?.[0])}/></div>{backupMessage && <p className="backup-message" role="status">{backupMessage}</p>}<small>Wichtig: Beim Wiederherstellen werden die aktuellen Daten durch den Inhalt des Backups ersetzt.</small></div><div className="setting-row"><div><strong>Währung</strong><span>Alle Beträge werden in Euro angezeigt.</span></div><span className="setting-pill">EUR (€)</span></div><div className="setting-row"><div><strong>App-Version</strong><span>Reselling Manager – Invoice Studio</span></div><span className="setting-pill">0.3.0 Local</span></div></section>}
           <footer className="page-footer">Reselling Manager <span>·</span> Einfach den Überblick behalten.</footer>
         </div>
       </main>
 
       {showForm && <ProductModal product={editing} onClose={() => {setShowForm(false);setEditing(null)}} onSave={saveProduct}/>}
+      {selling && <SaleModal product={selling} onClose={() => setSelling(null)} onSave={saveSale}/>}
       {showHelp && <HelpModal onClose={() => setShowHelp(false)}/>}
     </div>
   )
@@ -298,8 +398,47 @@ function EmptyState({ icon, title, text, action }: { icon: React.ReactNode; titl
   return <div className="empty-state"><div className="empty-icon">{icon}</div><strong>{title}</strong><p>{text}</p>{action}</div>
 }
 
-function ProductTable({ products, onEdit, onDelete }: { products: Product[]; onEdit: (p: Product) => void; onDelete: (id: string) => void }) {
-  return <div className="table-scroll"><table className="product-table"><thead><tr><th>PRODUKT</th><th>STÜCK</th><th>PLATTFORM</th><th>EINKAUF GESAMT</th><th>VERKAUF</th><th>GEWINN</th><th>STATUS</th><th/></tr></thead><tbody>{products.map(p => <tr key={p.id}><td><div className="product-name"><div className="product-thumb">{p.imageUrl ? <img src={p.imageUrl} alt={p.name}/> : <Tag size={16}/>}</div><div><strong>{p.name}</strong><span>{p.category || 'Ohne Kategorie'}{p.receiptPath ? ' · Beleg gespeichert' : ''}</span></div></div></td><td>{p.quantity || 1}</td><td>{p.platform || '–'}</td><td>{money(p.purchasePrice)}</td><td>{p.status === 'Verkauft' ? money(p.salePrice) : '–'}</td><td className={p.status === 'Verkauft' ? (profit(p) >= 0 ? 'positive' : 'negative') : 'table-muted'}>{p.status === 'Verkauft' ? money(profit(p)) : '–'}</td><td><span className={p.status === 'Verkauft' ? 'status-badge sold' : 'status-badge stock'}>{p.status}</span></td><td><div className="row-actions"><button aria-label="Bearbeiten" onClick={() => onEdit(p)}><Pencil size={15}/></button><button aria-label="Löschen" onClick={() => onDelete(p.id)}><Trash2 size={15}/></button></div></td></tr>)}</tbody></table></div>
+function ProductTable({ products, onEdit, onDelete, onSell }: { products: Product[]; onEdit: (p: Product) => void; onDelete: (id: string) => void; onSell: (p: Product) => void }) {
+  return <div className="table-scroll"><table className="product-table"><thead><tr><th>PRODUKT</th><th>STÜCK</th><th>PLATTFORM</th><th>EINKAUF GESAMT</th><th>VERKAUF</th><th>GEWINN</th><th>STATUS</th><th/></tr></thead><tbody>{products.map(p => <tr key={p.id}><td><div className="product-name"><div className="product-thumb">{p.imageUrl ? <img src={p.imageUrl} alt={p.name}/> : <Tag size={16}/>}</div><div><strong>{p.name}</strong><span>{p.category || 'Ohne Kategorie'}{p.receiptPath ? ' · Beleg gespeichert' : ''}</span></div></div></td><td>{p.quantity || 1}</td><td>{p.platform || '–'}</td><td>{money(p.purchasePrice)}</td><td>{p.status === 'Verkauft' ? money(p.salePrice) : '–'}</td><td className={p.status === 'Verkauft' ? (profit(p) >= 0 ? 'positive' : 'negative') : 'table-muted'}>{p.status === 'Verkauft' ? money(profit(p)) : '–'}</td><td><span className={p.status === 'Verkauft' ? 'status-badge sold' : 'status-badge stock'}>{p.status}</span></td><td><div className="row-actions"><button className="sale-action" aria-label={p.status === 'Verkauft' ? 'Verkauf bearbeiten' : 'Verkauf eintragen'} title={p.status === 'Verkauft' ? 'Verkauf bearbeiten' : 'Verkauf eintragen'} onClick={() => onSell(p)}><DollarSign size={14}/><span>{p.status === 'Verkauft' ? 'Anpassen' : 'Verkauf'}</span></button><button aria-label="Bearbeiten" onClick={() => onEdit(p)}><Pencil size={15}/></button><button aria-label="Löschen" onClick={() => onDelete(p.id)}><Trash2 size={15}/></button></div></td></tr>)}</tbody></table></div>
+}
+
+
+
+
+function SaleModal({ product, onClose, onSave }: {
+  product: Product
+  onClose: () => void
+  onSave: (values: { salePrice: number; shipping: number; fees: number; saleDate: string }) => void
+}) {
+  const [salePrice, setSalePrice] = useState(product.salePrice > 0 ? String(product.salePrice) : '')
+  const [shipping, setShipping] = useState(String(product.shipping || 0))
+  const [fees, setFees] = useState(String(product.fees || 0))
+  const [saleDate, setSaleDate] = useState(product.saleDate || new Date().toISOString().slice(0, 10))
+  const [error, setError] = useState('')
+  const estimated = Number(salePrice || 0) - product.purchasePrice - Number(shipping || 0) - Number(fees || 0)
+
+  function submit(event: React.FormEvent) {
+    event.preventDefault()
+    if (salePrice.trim() === '' || !Number.isFinite(Number(salePrice)) || Number(salePrice) <= 0) {
+      setError('Bitte gib einen gültigen Verkaufspreis ein.')
+      return
+    }
+    onSave({ salePrice: Number(salePrice), shipping: Number(shipping || 0), fees: Number(fees || 0), saleDate })
+  }
+
+  return <div className="modal-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) onClose() }}><form className="modal-card sale-modal" onSubmit={submit}>
+    <div className="modal-header"><div><span className="overline">INVENTAR · VERKAUF</span><h2>{product.status === 'Verkauft' ? 'Verkauf bearbeiten' : 'Produkt verkaufen'}</h2><p>{product.name}</p></div><button type="button" className="modal-close" onClick={onClose}><X size={19}/></button></div>
+    <div className="form-grid sale-form-grid">
+      <div className="sale-product-summary full"><span>Einkaufspreis</span><strong>{money(product.purchasePrice)}</strong></div>
+      <label className="field full"><span>Verkaufspreis gesamt (€) *</span><input autoFocus required type="number" min="0.01" step="0.01" value={salePrice} onChange={event => setSalePrice(event.target.value)} placeholder="z. B. 149,99"/></label>
+      <label className="field"><span>Versandkosten (€)</span><input type="number" min="0" step="0.01" value={shipping} onChange={event => setShipping(event.target.value)}/></label>
+      <label className="field"><span>Plattformgebühren (€)</span><input type="number" min="0" step="0.01" value={fees} onChange={event => setFees(event.target.value)}/></label>
+      <label className="field full"><span>Verkaufsdatum</span><input type="date" value={saleDate} onChange={event => setSaleDate(event.target.value)}/></label>
+      <div className="profit-preview full"><div><span>Voraussichtlicher Gewinn</span><small>Verkaufspreis − Einkaufspreis − Versand − Gebühren</small></div><strong className={estimated >= 0 ? 'positive' : 'negative'}>{money(estimated)}</strong></div>
+      {error && <p className="inline-error full">{error}</p>}
+    </div>
+    <div className="modal-actions"><button type="button" className="button-ghost" onClick={onClose}>Abbrechen</button><button type="submit" className="button-primary">Verkauf speichern</button></div>
+  </form></div>
 }
 
 function ProductModal({ product, onClose, onSave }: {
@@ -311,12 +450,7 @@ function ProductModal({ product, onClose, onSave }: {
   const [category, setCategory] = useState(product?.category || '')
   const [platform, setPlatform] = useState(product?.platform || '')
   const [purchasePrice, setPurchasePrice] = useState(product?.purchasePrice.toString() || '')
-  const [salePrice, setSalePrice] = useState(product?.salePrice.toString() || '')
-  const [shipping, setShipping] = useState(product?.shipping.toString() || '0')
-  const [fees, setFees] = useState(product?.fees.toString() || '0')
   const [purchaseDate, setPurchaseDate] = useState(product?.purchaseDate || new Date().toISOString().slice(0,10))
-  const [saleDate, setSaleDate] = useState(product?.saleDate || '')
-  const [status, setStatus] = useState<Status>(product?.status || 'Auf Lager')
   const [quantity, setQuantity] = useState(String(product?.quantity || 1))
   const [imageUrl, setImageUrl] = useState(product?.imageUrl || '')
   const [imageAttribution, setImageAttribution] = useState(product?.imageAttribution || '')
@@ -338,7 +472,6 @@ function ProductModal({ product, onClose, onSave }: {
   const [saving, setSaving] = useState(false)
   const cameraInput = useRef<HTMLInputElement>(null)
   const fileInput = useRef<HTMLInputElement>(null)
-  const estimated = Number(salePrice || 0) - Number(purchasePrice || 0) - Number(shipping || 0) - Number(fees || 0)
   const selectedLines = invoiceLines.filter(line => line.selected)
   const selectedLineTotal = selectedLines.reduce((sum, line) => sum + Number(line.amount || 0), 0)
   const selectedLineQuantity = selectedLines.reduce((sum, line) => sum + Math.max(1, Number(line.quantity || 1)), 0)
@@ -484,12 +617,12 @@ function ProductModal({ product, onClose, onSave }: {
     const common = {
       category,
       platform,
-      salePrice: Number(salePrice || 0),
-      shipping: Number(shipping || 0),
-      fees: Number(fees || 0),
+      salePrice: product?.salePrice || 0,
+      shipping: product?.shipping || 0,
+      fees: product?.fees || 0,
       purchaseDate,
-      saleDate,
-      status,
+      saleDate: product?.saleDate || '',
+      status: product?.status || 'Auf Lager',
       receiptPath,
     }
     const products: Product[] = invoiceLines.length > 1
@@ -571,14 +704,8 @@ function ProductModal({ product, onClose, onSave }: {
       <label className="field"><span>Kategorie</span><input value={category} onChange={e=>setCategory(e.target.value)} placeholder="z. B. Trading Cards"/></label>
       <label className="field"><span>Einkaufsdatum</span><input type="date" value={purchaseDate} onChange={e=>setPurchaseDate(e.target.value)}/></label>
       <label className="field"><span>Plattform</span><select value={platform} onChange={e=>setPlatform(e.target.value)}><option value="">Bitte wählen</option><option>eBay</option><option>Kleinanzeigen</option><option>Vinted</option><option>Cardmarket</option><option>Facebook Marketplace</option><option>Sonstige</option></select></label>
-      <div className="form-section full"><span>VERKAUF & KOSTEN</span></div>
-      <label className="field"><span>Verkaufspreis gesamt (€)</span><input type="number" min="0" step="0.01" value={salePrice} onChange={e=>setSalePrice(e.target.value)} placeholder="0,00"/></label>
-      <label className="field"><span>Versandkosten (€)</span><input type="number" min="0" step="0.01" value={shipping} onChange={e=>setShipping(e.target.value)}/></label>
-      <label className="field"><span>Plattformgebühren (€)</span><input type="number" min="0" step="0.01" value={fees} onChange={e=>setFees(e.target.value)}/></label>
-      <label className="field"><span>Verkaufsdatum</span><input type="date" value={saleDate} onChange={e=>setSaleDate(e.target.value)}/></label>
-      <label className="field"><span>Status</span><select value={status} onChange={e=>setStatus(e.target.value as Status)}><option>Auf Lager</option><option>Verkauft</option></select></label>
+      <div className="form-note full"><Package size={15}/> Das Produkt wird zunächst als Bestand gespeichert. Den Verkauf kannst du später direkt im Inventar eintragen.</div>
       {ocrText && <details className="ocr-details full"><summary>Erkannten Rechnungstext anzeigen</summary><pre>{ocrText.slice(0, 8000)}</pre></details>}
-      {invoiceLines.length <= 1 && <div className="profit-preview full"><div><span>Voraussichtlicher Gewinn</span><small>Verkauf gesamt − Einkauf gesamt − Versand − Gebühren</small></div><strong className={estimated >= 0 ? 'positive' : 'negative'}>{money(estimated)}</strong></div>}
     </div><div className="modal-actions"><button type="button" className="button-ghost" onClick={onClose} disabled={saving}>Abbrechen</button><button type="submit" className="button-primary" disabled={saving || scanBusy || (invoiceLines.length > 1 && selectedLines.length === 0)}>{saving ? <LoaderCircle size={15} className="spin"/> : null}{saving ? 'Speichert …' : product ? 'Änderungen speichern' : invoiceLines.length > 1 ? selectedLines.length + ' Produkte hinzufügen' : 'Produkt speichern'}</button></div></form>}
   </div></div>
 }

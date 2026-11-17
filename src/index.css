@@ -337,3 +337,30 @@ body{background:#f1eff8}
 :root[data-theme="dark"] .currency-select{background:#171b31;border-color:#393653;color:#e8e5f5}
 :root[data-theme="dark"] .receipt-inline{background:#29213f;border-color:#4a3a68;color:#d0adff}
 @media(max-width:600px){.currency-select{min-width:120px}.receipt-modal{height:calc(100vh - 20px)}.receipt-frame{min-height:240px}}
+
+
+/* Grouped inventory rows and invoice confidence review */
+.product-group-row td{background:#fafbfe;border-bottom-color:#e5e9f0;font-weight:600}
+.product-group-row:hover td{background:#f3f5fa}
+.group-expand{width:23px;height:23px;display:grid;place-items:center;border:0;border-radius:6px;background:#eef1f6;color:#66758d;padding:0}
+.group-expand[aria-expanded="true"] svg{transform:rotate(180deg)}
+.group-count-button{display:inline-flex;align-items:center;gap:4px;border:0;background:transparent;color:#6e5bb0;font-size:9px;font-weight:700;white-space:nowrap}
+.group-average-price{display:block;margin-top:4px;color:#929bad;font-size:8px;font-weight:400}
+.status-badge.mixed{background:#f2edff;color:#7658bd}
+.product-unit-row td{background:#fff;border-bottom-color:#f0f2f5}
+.product-unit-name{padding-left:25px}
+.product-unit-name .product-thumb{width:26px;height:26px}
+:root[data-theme="dark"] .product-group-row td{background:#191e34;border-bottom-color:#333651}
+:root[data-theme="dark"] .product-group-row:hover td{background:#222841}
+:root[data-theme="dark"] .group-expand{background:#2b314b;color:#bbc4dc}
+:root[data-theme="dark"] .group-count-button{color:#d0adff}
+:root[data-theme="dark"] .group-average-price{color:#929bb7}
+:root[data-theme="dark"] .status-badge.mixed{background:#30264d;color:#d3b7ff}
+:root[data-theme="dark"] .product-unit-row td{background:#151a2e;border-bottom-color:#30334d}
+.invoice-line-top{grid-template-columns:18px minmax(0,1fr) auto}
+.invoice-confidence{display:inline-flex;align-items:center;gap:3px;padding:5px 7px;border-radius:6px;font-size:8px;font-weight:700;white-space:nowrap}
+.invoice-confidence.good{background:#eaf5ef;color:#4d916e}
+.invoice-confidence.review{background:#fff4e5;color:#a87430}
+:root[data-theme="dark"] .invoice-confidence.good{background:#183a34;color:#7ed5b2}
+:root[data-theme="dark"] .invoice-confidence.review{background:#403322;color:#efc18b}
+@media(max-width:600px){.invoice-line-top{grid-template-columns:18px minmax(0,1fr)}.invoice-confidence{grid-column:2;justify-self:start;margin-top:2px}}

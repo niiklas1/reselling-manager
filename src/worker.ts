@@ -45,7 +45,7 @@ export default {
         const upstream = await fetch(upstreamUrl, { headers: { Accept: 'application/json' } })
         const headers = new Headers(upstream.headers)
         headers.set('Content-Type', 'application/json; charset=utf-8')
-        headers.set('Cache-Control', 'public, max-age=86400')
+        headers.set('Cache-Control', upstream.ok ? 'public, max-age=86400' : 'no-store')
         headers.set('X-Content-Type-Options', 'nosniff')
         return new Response(upstream.body, { status: upstream.status, headers })
       } catch {
@@ -64,7 +64,7 @@ export default {
         })
         const headers = new Headers(upstream.headers)
         headers.set('Content-Type', 'application/json; charset=utf-8')
-        headers.set('Cache-Control', 'public, max-age=86400')
+        headers.set('Cache-Control', upstream.ok ? 'public, max-age=86400' : 'no-store')
         headers.set('X-Content-Type-Options', 'nosniff')
         return new Response(upstream.body, { status: upstream.status, headers })
       } catch {

@@ -270,9 +270,17 @@ function App() {
       const blob = makeZip(entries)
       const fileName = 'reselling-manager-backup-' + new Date().toISOString().slice(0, 10) + '.zip'
       const backupFile = new File([blob], fileName, { type: 'application/zip' })
+      let shared = false
       if (navigator.share && navigator.canShare?.({ files: [backupFile] })) {
-        await navigator.share({ files: [backupFile], title: 'Reselling-Manager-Backup' })
-      } else {
+        try {
+          await navigator.share({ files: [backupFile], title: 'Reselling-Manager-Backup' })
+          shared = true
+        } catch (shareError) {
+          if (shareError instanceof DOMException && shareError.name === 'AbortError') throw shareError
+          // If the browser rejects file sharing after the asynchronous backup build, use a normal download.
+        }
+      }
+      if (!shared) {
         const url = URL.createObjectURL(blob)
         const link = document.createElement('a')
         link.href = url

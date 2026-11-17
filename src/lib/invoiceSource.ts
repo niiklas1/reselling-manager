@@ -9,7 +9,10 @@ const MAX_EMAIL_SIZE = 15 * 1024 * 1024
 const MAX_ATTACHMENT_SIZE = 10 * 1024 * 1024
 
 function htmlInvoiceText(html: string): string {
-  if (typeof DOMParser === 'undefined') return html.replace(/<[^>]*>/g, ' ')
+  if (typeof DOMParser === 'undefined') return html
+    .replace(/<\\/(?:td|th)\\s*>/gi, ' | ')
+    .replace(/<\\/(?:tr|p|div)\\s*>|<br\\s*\\/?\\s*>/gi, '\\n')
+    .replace(/<[^>]*>/g, ' ')
   const document = new DOMParser().parseFromString(html, 'text/html')
   document.querySelectorAll('script,style,noscript,svg,iframe,form,button,nav,footer,header').forEach(node => node.remove())
   const tableRows = Array.from(document.querySelectorAll('tr'))

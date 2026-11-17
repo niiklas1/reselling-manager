@@ -110,7 +110,7 @@ export function productNameSimilarity(receiptName: string, catalogName: string):
 }
 
 async function requestCatalog(path: string): Promise<CatalogItem[]> {
-  if (!await reserveFreeApiRequest()) return []
+  if (!await reserveFreeApiRequest()) throw new Error('Free product catalog request budget reached')
   const response = await fetch(path, { headers: { Accept: 'application/json' } })
   if (response.status === 404) return []
   if (!response.ok) throw new Error('Product catalog request failed: ' + response.status)

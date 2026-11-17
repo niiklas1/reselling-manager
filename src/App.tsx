@@ -48,6 +48,7 @@ function mapProductRow(row: any): Product {
 function App() {
   const [section, setSection] = useState<Section>('Übersicht')
   const [session, setSession] = useState<Session | null>(null)
+  const [passwordRecovery, setPasswordRecovery] = useState(false)
   const [authLoading, setAuthLoading] = useState(true)
   const [productsLoading, setProductsLoading] = useState(false)
   const [dataError, setDataError] = useState('')
@@ -66,7 +67,8 @@ function App() {
       setSession(data.session)
       setAuthLoading(false)
     })
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, nextSession) => {
+      if (event === 'PASSWORD_RECOVERY') setPasswordRecovery(true)
       setSession(nextSession)
       setAuthLoading(false)
     })
@@ -200,6 +202,7 @@ function App() {
   if (authLoading) {
     return <div className="auth-loading"><LoaderCircle className="spin" size={24}/><span>Reselling Manager wird geladen …</span></div>
   }
+  if (passwordRecovery) return <PasswordRecoveryScreen onComplete={() => setPasswordRecovery(false)} />
   if (!session) return <AuthScreen />
 
   const navItems: { label: Section; icon: typeof LayoutDashboard }[] = [
@@ -383,6 +386,63 @@ function AuthScreen() {
           {mode !== 'login' && <button onClick={() => {setMode('login');setError('');setMessage('')}}>Zurück zur Anmeldung</button>}
         </div>
         <div className="auth-security"><LockKeyhole size={13}/> Jeder Account kann ausschließlich seine eigenen Produkte sehen.</div>
+      </section>
+    </main>
+  )
+}
+
+
+function PasswordRecoveryScreen({ onComplete }: { onComplete: () => void }) {
+  const [password, setPassword] = useState('')
+  const [confirmPassword, setConfirmPassword] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const [updated, setUpdated] = useState(false)
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault()
+    setError('')
+    if (password.length < 8) {
+      setError('Dein Passwort muss mindestens 8 Zeichen lang sein.')
+      return
+    }
+    if (password !== confirmPassword) {
+      setError('Die beiden Passwörter stimmen nicht überein.')
+      return
+    }
+    setBusy(true)
+    const { error: updateError } = await supabase.auth.updateUser({ password })
+    setBusy(false)
+    if (updateError) {
+      setError(updateError.message)
+      return
+    }
+    setUpdated(true)
+  }
+
+  return (
+    <main className="auth-screen">
+      <section className="auth-card">
+        <div className="auth-brand"><div className="brand-symbol">r.</div><span>resell<span className="brand-muted">manager</span></span></div>
+        <div className="auth-heading">
+          <div className="overline">ACCOUNT WIEDERHERSTELLEN</div>
+          <h1>Neues Passwort festlegen</h1>
+          <p>Wähle ein neues Passwort für deinen Reselling-Manager-Account.</p>
+        </div>
+        {error && <div className="auth-message error" role="alert">{error}</div>}
+        {updated ? (
+          <>
+            <div className="auth-message success" role="status">Dein Passwort wurde erfolgreich geändert.</div>
+            <button className="button-primary auth-submit" type="button" onClick={onComplete}>Zum Dashboard</button>
+          </>
+        ) : (
+          <form className="auth-form" onSubmit={submit}>
+            <label className="field"><span>Neues Passwort</span><div className="auth-input-wrap"><LockKeyhole size={16}/><input type="password" required minLength={8} autoComplete="new-password" value={password} onChange={e => setPassword(e.target.value)} placeholder="Mindestens 8 Zeichen"/></div></label>
+            <label className="field"><span>Passwort wiederholen</span><div className="auth-input-wrap"><LockKeyhole size={16}/><input type="password" required minLength={8} autoComplete="new-password" value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)} placeholder="Passwort wiederholen"/></div></label>
+            <button className="button-primary auth-submit" type="submit" disabled={busy}>{busy ? <LoaderCircle className="spin" size={16}/> : null}{busy ? 'Bitte warten …' : 'Neues Passwort speichern'}</button>
+          </form>
+        )}
+        <div className="auth-security"><LockKeyhole size={13}/> Dein neues Passwort wird sicher bei Supabase gespeichert.</div>
       </section>
     </main>
   )

@@ -6,7 +6,8 @@ import {
   CalendarDays, Tag, Truck, CheckCircle2, LoaderCircle, DollarSign,
   Camera, FileText, FileUp, ImagePlus, Moon, Sun, ExternalLink, RefreshCw, HardDrive
 } from 'lucide-react'
-import { readInvoiceSource, type InvoiceLineItem } from './lib/invoiceScanner'
+import { readInvoiceSource } from './lib/invoiceSource'
+import type { InvoiceLineItem } from './lib/invoiceScanner'
 import { enrichInvoiceProductNames } from './lib/productLookup'
 import { googleImagesUrl, searchProductImages, type ProductImageResult } from './lib/productImages'
 

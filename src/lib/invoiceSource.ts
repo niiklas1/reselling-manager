@@ -37,6 +37,25 @@ function emailBodyText(email: ParsedEmail): string {
   return [subject ? 'Betreff: ' + subject : '', body].filter(Boolean).join('\n')
 }
 
+function rawSinglePartBody(rawEmail: string): string {
+  const separator = /\\r?\\n\\r?\\n/
+  const match = separator.exec(rawEmail)
+  if (!match || match.index === undefined) return ''
+  const headers = rawEmail.slice(0, match.index)
+  const contentType = headers.match(/^content-type:\\s*([^;\\r\\n]+)/im)?.[1]?.trim().toLowerCase()
+  // Multipart and encoded bodies must be decoded by PostalMime, not guessed here.
+  if (contentType?.startsWith('multipart/') || !['text/plain', 'text/html'].includes(contentType || '')) return ''
+  if (/^content-transfer-encoding:\\s*(?:base64|quoted-printable)/im.test(headers)) return ''
+  const body = rawEmail.slice(match.index + match[0].length).trim()
+  return contentType === 'text/html' ? htmlInvoiceText(body) : body
+}
+
+function normalizeEmailInvoiceLabels(text: string): string {
+  return text.split(/\\r?\\n/)
+    .map(line => line.replace(/^\\s*(?:artikel|produkt|item|description|bezeichnung)\\s*[:|]\\s*/i, ''))
+    .join('\\n')
+}
+
 function attachmentFile(attachment: ParsedEmail['attachments'][number], index: number): File | null {
   const mime = (attachment.mimeType || '').toLowerCase()
   const filename = attachment.filename?.trim() || 'E-Mail-Anhang-' + (index + 1)
@@ -103,17 +122,24 @@ export async function readInvoiceSource(file: File, onProgress: Progress): Promi
     }
   }
 
-  const bodyText = emailBodyText(email)
-  if (bodyText.trim()) {
+  const parsedBody = emailBodyText(email)
+  const rawFallback = rawSinglePartBody(await file.text())
+  const bodySources = [
+    { text: parsedBody, label: 'E-Mail-Text/HTML' },
+    { text: rawFallback, label: 'E-Mail-Text-Fallback' },
+  ].filter(source => source.text.trim())
+
+  for (const source of bodySources) {
+    const bodyText = normalizeEmailInvoiceLabels(source.text)
     const bodyResult = parseInvoiceText(bodyText, 'pdf-text', 'E-Mail-Text/HTML ohne externen KI-Dienst')
     candidates.push({
       result: {
         ...bodyResult,
         date: bodyResult.date || (email.date ? new Date(email.date).toISOString().slice(0, 10) : ''),
-        backend: 'E-Mail-Text/HTML',
+        backend: source.label,
       },
       score: candidateScore(bodyResult),
-      label: 'E-Mail-Text',
+      label: source.label,
     })
   }
 

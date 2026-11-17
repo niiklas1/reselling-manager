@@ -12,6 +12,7 @@ import { googleImagesUrl, searchProductImages, type ProductImageResult } from '.
 type Status = 'Auf Lager' | 'Verkauft'
 type Product = {
   id: string
+  groupId?: string
   name: string
   category: string
   platform: string
@@ -48,28 +49,55 @@ let activeCurrency = 'EUR'
 const money = (value: number) => new Intl.NumberFormat('de-DE', { style: 'currency', currency: activeCurrency }).format(value)
 const profit = (p: Product) => p.salePrice - p.purchasePrice - p.shipping - p.fees
 
+function normalizeProductUnits(records: Array<Partial<Product>>): Product[] {
+  const units: Product[] = []
+  for (const item of records) {
+    const id = typeof item.id === 'string' && item.id ? item.id : crypto.randomUUID()
+    const count = Math.max(1, Math.min(10000, Math.floor(Number(item.quantity || 1)) || 1))
+    const groupId = typeof item.groupId === 'string' && item.groupId ? item.groupId : id
+    const purchasePrice = Number(item.purchasePrice || 0)
+    const salePrice = Number(item.salePrice || 0)
+    const shipping = Number(item.shipping || 0)
+    const fees = Number(item.fees || 0)
+    const common = {
+      groupId,
+      name: item.name || '',
+      category: item.category || '',
+      platform: item.platform || '',
+      purchaseDate: item.purchaseDate || '',
+      saleDate: item.saleDate || '',
+      status: item.status === 'Verkauft' ? 'Verkauft' as Status : 'Auf Lager' as Status,
+      imageUrl: item.imageUrl || '',
+      imageAttribution: item.imageAttribution || '',
+      imageLicense: item.imageLicense || '',
+      receiptPath: typeof item.receiptPath === 'string' ? item.receiptPath : '',
+      quantity: 1,
+    }
+    if (count === 1) {
+      units.push({ id, ...common, purchasePrice, salePrice, shipping, fees })
+      continue
+    }
+    // Legacy records stored the total line amount alongside a quantity. Split that
+    // amount equally so each physical unit can be sold and accounted for separately.
+    for (let index = 0; index < count; index++) {
+      units.push({
+        id: index === 0 ? id : crypto.randomUUID(),
+        ...common,
+        purchasePrice: purchasePrice / count,
+        salePrice: salePrice / count,
+        shipping: shipping / count,
+        fees: fees / count,
+      })
+    }
+  }
+  return units
+}
+
 function readStoredProducts(): Product[] {
   try {
     const stored = JSON.parse(localStorage.getItem(PRODUCTS_STORAGE_KEY) || '[]')
     if (!Array.isArray(stored)) return []
-    return stored.map((item: Partial<Product>) => ({
-      id: item.id || crypto.randomUUID(),
-      name: item.name || '',
-      category: item.category || '',
-      platform: item.platform || '',
-      purchasePrice: Number(item.purchasePrice || 0),
-      salePrice: Number(item.salePrice || 0),
-      shipping: Number(item.shipping || 0),
-      fees: Number(item.fees || 0),
-      purchaseDate: item.purchaseDate || '',
-      saleDate: item.saleDate || '',
-      status: item.status === 'Verkauft' ? 'Verkauft' : 'Auf Lager',
-      quantity: Math.max(1, Number(item.quantity || 1)),
-      imageUrl: item.imageUrl || '',
-      imageAttribution: item.imageAttribution || '',
-      imageLicense: item.imageLicense || '',
-      receiptPath: item.receiptPath?.startsWith('local:') ? item.receiptPath : '',
-    }))
+    return normalizeProductUnits(stored as Array<Partial<Product>>)
   } catch {
     return []
   }
@@ -597,13 +625,13 @@ function App() {
         newPaths[archivePath] = path
       }
 
-      const finalProducts = restoredProducts.map(product => {
+      const finalProducts = normalizeProductUnits(restoredProducts.map(product => {
         const oldPath = typeof product.receiptPath === 'string' ? product.receiptPath : ''
         const key = oldPath.startsWith('backup:') ? oldPath.slice(7) : oldPath
         if (key && receiptFiles[key] && !newPaths[key]) throw new Error('Ein Beleg konnte nicht wiederhergestellt werden.')
         if ((oldPath.startsWith('local:') || oldPath.startsWith('backup:')) && !newPaths[key]) throw new Error('Ein Beleg fehlt im Backup. Deine bisherigen Daten bleiben unverändert.')
         return { ...product, receiptPath: newPaths[key] || '' }
-      })
+      }))
 
       const previousStorage: Record<string, string> = {}
       for (let index = 0; index < localStorage.length; index++) {
@@ -801,10 +829,80 @@ function EmptyState({ icon, title, text, action }: { icon: React.ReactNode; titl
   return <div className="empty-state"><div className="empty-icon">{icon}</div><strong>{title}</strong><p>{text}</p>{action}</div>
 }
 
-function ProductTable({ products, onEdit, onDelete, onSell, onReceipt }: { products: Product[]; onEdit: (p: Product) => void; onDelete: (id: string) => void; onSell: (p: Product) => void; onReceipt: (p: Product) => void }) {
-  return <div className="table-scroll"><table className="product-table"><thead><tr><th>PRODUKT</th><th>STÜCK</th><th>PLATTFORM</th><th>EINKAUF GESAMT</th><th>VERKAUF</th><th>GEWINN</th><th>STATUS</th><th/></tr></thead><tbody>{products.map(p => <tr key={p.id}><td><div className="product-name"><div className="product-thumb">{p.imageUrl ? <img src={p.imageUrl} alt={p.name}/> : <Tag size={16}/>}</div><div><strong>{p.name}</strong><span>{p.category || 'Ohne Kategorie'}</span>{p.receiptPath && <button className="receipt-inline" onClick={() => onReceipt(p)} title="Originalbeleg öffnen"><FileText size={12}/> Beleg öffnen</button>}</div></div></td><td>{p.quantity || 1}</td><td>{p.platform || '–'}</td><td>{money(p.purchasePrice)}</td><td>{p.status === 'Verkauft' ? money(p.salePrice) : '–'}</td><td className={p.status === 'Verkauft' ? (profit(p) >= 0 ? 'positive' : 'negative') : 'table-muted'}>{p.status === 'Verkauft' ? money(profit(p)) : '–'}</td><td><span className={p.status === 'Verkauft' ? 'status-badge sold' : 'status-badge stock'}>{p.status}</span></td><td><div className="row-actions"><button className="sale-action" aria-label={p.status === 'Verkauft' ? 'Verkauf bearbeiten' : 'Verkauf eintragen'} title={p.status === 'Verkauft' ? 'Verkauf bearbeiten' : 'Verkauf eintragen'} onClick={() => onSell(p)}><DollarSign size={14}/><span>{p.status === 'Verkauft' ? 'Anpassen' : 'Verkauf'}</span></button><button aria-label="Bearbeiten" onClick={() => onEdit(p)}><Pencil size={15}/></button><button aria-label="Löschen" onClick={() => onDelete(p.id)}><Trash2 size={15}/></button></div></td></tr>)}</tbody></table></div>
+function productGroupKey(product: Product): string {
+  const normalize = (value: string) => value.trim().toLocaleLowerCase('de-DE').replace(/\s+/g, ' ')
+  return normalize(product.name) + '|' + normalize(product.category)
 }
 
+function ProductTable({ products, onEdit, onDelete, onSell, onReceipt }: { products: Product[]; onEdit: (p: Product) => void; onDelete: (id: string) => void; onSell: (p: Product) => void; onReceipt: (p: Product) => void }) {
+  const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({})
+  const groups = new Map<string, Product[]>()
+  for (const product of products) {
+    const key = productGroupKey(product)
+    const existing = groups.get(key) || []
+    existing.push(product)
+    groups.set(key, existing)
+  }
+
+  function renderUnitRow(product: Product, key: string, label?: string) {
+    return <tr key={product.id} className={label ? 'product-unit-row' : undefined}>
+      <td><div className={label ? 'product-name product-unit-name' : 'product-name'}>
+        <div className="product-thumb">{product.imageUrl ? <img src={product.imageUrl} alt={product.name}/> : <Tag size={16}/>}</div>
+        <div><strong>{product.name}</strong><span>{label ? label + ' · ' + (product.category || 'Ohne Kategorie') : (product.category || 'Ohne Kategorie')}</span>
+          {product.receiptPath && <button className="receipt-inline" onClick={() => onReceipt(product)} title="Originalbeleg öffnen"><FileText size={12}/> Beleg öffnen</button>}
+        </div>
+      </div></td>
+      <td>1</td>
+      <td>{product.platform || '–'}</td>
+      <td>{money(product.purchasePrice)}</td>
+      <td>{product.status === 'Verkauft' ? money(product.salePrice) : '–'}</td>
+      <td className={product.status === 'Verkauft' ? (profit(product) >= 0 ? 'positive' : 'negative') : 'table-muted'}>{product.status === 'Verkauft' ? money(profit(product)) : '–'}</td>
+      <td><span className={product.status === 'Verkauft' ? 'status-badge sold' : 'status-badge stock'}>{product.status}</span></td>
+      <td><div className="row-actions">
+        <button className="sale-action" aria-label={product.status === 'Verkauft' ? 'Verkauf bearbeiten' : 'Verkauf eintragen'} title={product.status === 'Verkauft' ? 'Verkauf bearbeiten' : 'Verkauf eintragen'} onClick={() => onSell(product)}><DollarSign size={14}/><span>{product.status === 'Verkauft' ? 'Anpassen' : 'Verkauf'}</span></button>
+        <button aria-label="Bearbeiten" title="Exemplar bearbeiten" onClick={() => onEdit(product)}><Pencil size={15}/></button>
+        <button aria-label="Löschen" title="Exemplar löschen" onClick={() => onDelete(product.id)}><Trash2 size={15}/></button>
+      </div></td>
+    </tr>
+  }
+
+  return <div className="table-scroll"><table className="product-table"><thead><tr><th>PRODUKT</th><th>EXEMPLARE</th><th>PLATTFORM</th><th>EINKAUF GESAMT</th><th>VERKAUF</th><th>GEWINN</th><th>STATUS</th><th/></tr></thead><tbody>
+    {[...groups.entries()].map(([key, items]) => {
+      if (items.length === 1) return renderUnitRow(items[0], key)
+      const first = items[0]
+      const expanded = Boolean(expandedGroups[key])
+      const inStock = items.filter(item => item.status === 'Auf Lager')
+      const soldItems = items.filter(item => item.status === 'Verkauft')
+      const purchaseTotal = items.reduce((sum, item) => sum + item.purchasePrice, 0)
+      const saleTotal = soldItems.reduce((sum, item) => sum + item.salePrice, 0)
+      const profitTotal = soldItems.reduce((sum, item) => sum + profit(item), 0)
+      const platforms = [...new Set(items.map(item => item.platform).filter(Boolean))]
+      const statusLabel = inStock.length && soldItems.length
+        ? inStock.length + ' auf Lager · ' + soldItems.length + ' verkauft'
+        : inStock.length ? 'Auf Lager' : 'Verkauft'
+      const statusClass = inStock.length && soldItems.length ? 'mixed' : inStock.length ? 'stock' : 'sold'
+      return <React.Fragment key={key}>
+        <tr className="product-group-row">
+          <td><div className="product-name">
+            <button className="group-expand" aria-label={expanded ? 'Exemplare zuklappen' : 'Exemplare ausklappen'} aria-expanded={expanded} onClick={() => setExpandedGroups(current => ({ ...current, [key]: !current[key] }))}><ChevronDown size={15}/></button>
+            <div className="product-thumb">{first.imageUrl ? <img src={first.imageUrl} alt={first.name}/> : <Tag size={16}/>}</div>
+            <div><strong>{first.name}</strong><span>{first.category || 'Ohne Kategorie'} · {items.length} einzelne Exemplare</span>
+              {first.receiptPath && <button className="receipt-inline" onClick={() => onReceipt(first)} title="Originalbeleg öffnen"><FileText size={12}/> Beleg öffnen</button>}
+            </div>
+          </div></td>
+          <td><strong>{items.length}</strong></td>
+          <td>{platforms.length > 1 ? 'Mehrere' : platforms[0] || '–'}</td>
+          <td><strong>{money(purchaseTotal)}</strong><small className="group-average-price">Ø {money(purchaseTotal / items.length)} / Stück</small></td>
+          <td>{saleTotal ? money(saleTotal) : '–'}</td>
+          <td className={profitTotal >= 0 ? (soldItems.length ? 'positive' : 'table-muted') : 'negative'}>{soldItems.length ? money(profitTotal) : '–'}</td>
+          <td><span className={'status-badge ' + statusClass}>{statusLabel}</span></td>
+          <td><button className="group-count-button" onClick={() => setExpandedGroups(current => ({ ...current, [key]: !current[key] }))}>{expanded ? 'Zuklappen' : 'Details'} <ChevronDown size={13}/></button></td>
+        </tr>
+        {expanded && items.map((item, index) => renderUnitRow(item, key, 'Exemplar ' + (index + 1)))}
+      </React.Fragment>
+    })}
+  </tbody></table></div>
+}
 
 
 function ReceiptModal({ product, onClose }: { product: Product; onClose: () => void }) {
@@ -969,10 +1067,10 @@ function ProductModal({ product, onClose, onSave }: {
       })
       setOcrText(extracted.text)
       if (extracted.date) setPurchaseDate(extracted.date)
-      if (extracted.lineItems.length > 1) {
+      if (extracted.lineItems.length > 1 || extracted.lineItems.some(line => line.confidence < 0.72)) {
         const initialLines: InvoiceDraftLine[] = extracted.lineItems.map(line => ({
           ...line,
-          selected: true,
+          selected: line.confidence >= 0.72,
           imageUrl: '',
           imageAttribution: '',
           imageLicense: '',
@@ -1025,9 +1123,9 @@ function ProductModal({ product, onClose, onSave }: {
 
   function submit(e: React.FormEvent) {
     e.preventDefault()
-    if (invoiceLines.length > 1) {
-      if (!selectedLines.length || selectedLines.some(line => !line.description.trim() || Number(line.quantity) < 1 || Number(line.amount) < 0)) return
-    } else if (!name.trim() || purchasePrice === '' || Number(quantity) < 1) {
+    if (invoiceLines.length > 0) {
+      if (!selectedLines.length || selectedLines.some(line => !line.description.trim() || Number(line.quantity) < 1 || Number(line.amount) <= 0)) return
+    } else if (!name.trim() || purchasePrice === '' || !Number.isFinite(Number(purchasePrice)) || Number(quantity) < 1) {
       return
     }
 
@@ -1040,30 +1138,64 @@ function ProductModal({ product, onClose, onSave }: {
       fees: product?.fees || 0,
       purchaseDate,
       saleDate: product?.saleDate || '',
-      status: product?.status || 'Auf Lager',
+      status: product?.status || 'Auf Lager' as Status,
       receiptPath,
     }
-    const products: Product[] = invoiceLines.length > 1
-      ? selectedLines.map(line => ({
+
+    let products: Product[]
+    if (invoiceLines.length > 0) {
+      products = selectedLines.flatMap(line => {
+        const count = Math.max(1, Math.floor(Number(line.quantity) || 1))
+        const groupId = crypto.randomUUID()
+        const unitPurchasePrice = Number(line.amount || 0) / count
+        return Array.from({ length: count }, () => ({
           id: crypto.randomUUID(),
+          groupId,
           name: line.description.trim(),
           ...common,
-          purchasePrice: Number(line.amount || 0),
-          quantity: Math.max(1, Math.floor(Number(line.quantity) || 1)),
+          salePrice: 0,
+          shipping: 0,
+          fees: 0,
+          status: 'Auf Lager' as Status,
+          purchasePrice: Number(unitPurchasePrice.toFixed(2)),
+          quantity: 1,
           imageUrl: line.imageUrl,
           imageAttribution: line.imageAttribution,
           imageLicense: line.imageLicense,
         }))
-      : [{
-          id: product?.id || crypto.randomUUID(),
-          name: name.trim(),
-          ...common,
-          purchasePrice: Number(purchasePrice),
-          quantity: Math.max(1, Math.floor(Number(quantity) || 1)),
-          imageUrl,
-          imageAttribution,
-          imageLicense,
-        }]
+      })
+    } else if (product) {
+      products = [{
+        id: product.id,
+        groupId: product.groupId || product.id,
+        name: name.trim(),
+        ...common,
+        purchasePrice: Number(purchasePrice),
+        quantity: 1,
+        imageUrl,
+        imageAttribution,
+        imageLicense,
+      }]
+    } else {
+      const count = Math.max(1, Math.floor(Number(quantity) || 1))
+      const groupId = crypto.randomUUID()
+      const unitPurchasePrice = Number(purchasePrice) / count
+      products = Array.from({ length: count }, () => ({
+        id: crypto.randomUUID(),
+        groupId,
+        name: name.trim(),
+        ...common,
+        salePrice: 0,
+        shipping: 0,
+        fees: 0,
+        status: 'Auf Lager' as Status,
+        purchasePrice: Number(unitPurchasePrice.toFixed(2)),
+        quantity: 1,
+        imageUrl,
+        imageAttribution,
+        imageLicense,
+      }))
+    }
 
     void onSave(products, invoiceFile).then(saved => {
       if (saved) onClose()
@@ -1088,9 +1220,9 @@ function ProductModal({ product, onClose, onSave }: {
     </div>
     {showForm && <form onSubmit={submit}><div className="form-grid">
       {invoiceLines.length > 1 ? <div className="invoice-lines-panel full">
-        <div className="invoice-lines-heading"><div><strong>{invoiceLines.length} erkannte Artikel</strong><small>Alle passenden Positionen sind vorausgewählt. Prüfe Namen, Stückzahl und Gesamtpreis je Position.</small></div><span>{selectedLines.length} ausgewählt</span></div>
+        <div className="invoice-lines-heading"><div><strong>{invoiceLines.length} erkannte Positionen</strong><small>Sichere Positionen sind vorausgewählt. Unsichere Erkennungen musst du aktiv auswählen. Prüfe Namen, Stückzahl und Gesamtpreis je Position.</small></div><span>{selectedLines.length} ausgewählt</span></div>
         {invoiceLines.map(line => <div className="invoice-line-card" key={line.id}>
-          <div className="invoice-line-top"><input type="checkbox" checked={line.selected} onChange={e => updateInvoiceLine(line.id,{selected:e.target.checked})}/><input className="invoice-line-name" value={line.description} onChange={e => updateInvoiceLine(line.id,{description:e.target.value})} aria-label="Artikelname"/></div>
+          <div className="invoice-line-top"><input type="checkbox" checked={line.selected} onChange={e => updateInvoiceLine(line.id,{selected:e.target.checked})}/><input className="invoice-line-name" value={line.description} onChange={e => updateInvoiceLine(line.id,{description:e.target.value})} aria-label="Artikelname"/><span className={line.confidence >= 0.72 ? 'invoice-confidence good' : 'invoice-confidence review'}>{line.confidence >= 0.72 ? 'Sicher' : 'Bitte prüfen'} · {Math.round(line.confidence * 100)}%</span></div>
           <div className="invoice-line-bottom">
             <label><span>Stück</span><input type="number" min="1" step="1" value={line.quantity} onChange={e => updateInvoiceLine(line.id,{quantity:Number(e.target.value)})}/></label>
             <label><span>Gesamtpreis (€)</span><input type="number" min="0" step="0.01" value={line.amount} onChange={e => updateInvoiceLine(line.id,{amount:Number(e.target.value)})}/></label>
@@ -1107,8 +1239,8 @@ function ProductModal({ product, onClose, onSave }: {
         <div className="invoice-lines-total"><span>Ausgewählte Artikel · {selectedLineQuantity} Stück</span><strong>{money(selectedLineTotal)}</strong></div>
       </div> : <>
         <label className="field full"><span>Produktname *</span><input autoFocus required value={name} onChange={e=>setName(e.target.value)} onBlur={() => { if (name.trim() && !imageUrl && !imageBusy) void loadImages(name) }} placeholder="z. B. Pokémon ETB – Hidden Fates"/></label>
-        <label className="field"><span>Stückzahl *</span><input required type="number" min="1" step="1" value={quantity} onChange={e=>setQuantity(e.target.value)}/></label>
-        <label className="field"><span>Einkaufspreis gesamt (€) *</span><input required type="number" min="0" step="0.01" value={purchasePrice} onChange={e=>setPurchasePrice(e.target.value)} placeholder="0,00"/></label>
+        <label className="field"><span>{product ? 'Einzelstück' : 'Stückzahl *'}</span><input required type="number" min="1" step="1" disabled={Boolean(product)} value={product ? '1' : quantity} onChange={e=>setQuantity(e.target.value)}/></label>
+        <label className="field"><span>{product ? 'Einkaufspreis dieses Exemplars (€) *' : 'Einkaufspreis gesamt (€) *'}</span><input required type="number" min="0" step="0.01" value={purchasePrice} onChange={e=>setPurchasePrice(e.target.value)} placeholder="0,00"/></label>
         <div className="form-section full"><span>PRODUKTBILD</span></div>
         <div className="image-picker full">
           {imageUrl ? <div className="selected-image"><img src={imageUrl} alt="Automatisch gewähltes Produktbild"/><div><strong>Automatisches Produktbild</strong><small>{imageAttribution ? 'Bildnachweis: ' + imageAttribution : 'Bild automatisch gewählt'}{imageLicense ? ' · ' + imageLicense : ''}</small><button type="button" onClick={() => {setImageUrl('');setImageAttribution('');setImageLicense('')}}>Entfernen</button></div></div> : <div className="image-empty"><ImagePlus size={18}/><span>{imageError || 'Das Produktbild wird automatisch gesucht.'}</span></div>}
@@ -1124,7 +1256,7 @@ function ProductModal({ product, onClose, onSave }: {
       <label className="field"><span>Plattform</span><select value={platform} onChange={e=>setPlatform(e.target.value)}><option value="">Bitte wählen</option><option>eBay</option><option>Kleinanzeigen</option><option>Vinted</option><option>Cardmarket</option><option>Facebook Marketplace</option><option>Sonstige</option></select></label>
       <div className="form-note full"><Package size={15}/> Das Produkt wird zunächst als Bestand gespeichert. Den Verkauf kannst du später direkt im Inventar eintragen.</div>
       {ocrText && <details className="ocr-details full"><summary>Erkannten Rechnungstext anzeigen</summary><pre>{ocrText.slice(0, 8000)}</pre></details>}
-    </div><div className="modal-actions"><button type="button" className="button-ghost" onClick={onClose} disabled={saving}>Abbrechen</button><button type="submit" className="button-primary" disabled={saving || scanBusy || (invoiceLines.length > 1 && selectedLines.length === 0)}>{saving ? <LoaderCircle size={15} className="spin"/> : null}{saving ? 'Speichert …' : product ? 'Änderungen speichern' : invoiceLines.length > 1 ? selectedLines.length + ' Produkte hinzufügen' : 'Produkt speichern'}</button></div></form>}
+    </div><div className="modal-actions"><button type="button" className="button-ghost" onClick={onClose} disabled={saving}>Abbrechen</button><button type="submit" className="button-primary" disabled={saving || scanBusy || (invoiceLines.length > 0 && selectedLines.length === 0)}>{saving ? <LoaderCircle size={15} className="spin"/> : null}{saving ? 'Speichert …' : product ? 'Änderungen speichern' : invoiceLines.length > 0 ? selectedLines.length + ' Positionen hinzufügen' : 'Produkt speichern'}</button></div></form>}
   </div></div>
 }
 

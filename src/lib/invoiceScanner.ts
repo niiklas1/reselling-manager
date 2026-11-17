@@ -140,6 +140,9 @@ function extractDescription(line: string, prices: MoneyToken[]): string {
     .replace(/\b\d{1,4}\s*(?:x|×|stk\.?|stück|pcs?\.?|st\.?)\b/ig, ' ')
     .replace(/\b(?:ean|gtin|sku|artikelnummer|art\.?\s*nr)\s*[:#-]?\s*[A-Z0-9-]{5,}\b/ig, ' ')
     .replace(/[|:;–-]+$/g, '')
+    // Strip OCR artefacts such as stars, bullets and replacement symbols while
+    // preserving meaningful product-name punctuation and accented characters.
+    .replace(/[^\p{L}\p{N}\s&'’/().,+-]/gu, ' ')
     .replace(/\s+/g, ' ')
     .trim()
 }
@@ -274,7 +277,12 @@ export function parseInvoiceText(
   recognition: InvoiceExtraction['recognition'] = 'browser-ocr',
   backend = 'Tesseract.js',
 ): InvoiceExtraction {
-  const text = rawText.replace(/\r/g, '\n').replace(/[ \t]+/g, ' ')
+  const text = rawText
+    // Normalize both real line endings and escaped line-ending sequences from OCR engines.
+    .replace(/\\r\\n/g, '\n')
+    .replace(/\\n/g, '\n')
+    .replace(/\r/g, '\n')
+    .replace(/[ \t]+/g, ' ')
   const lines = text.split('\n').map(line => line.trim()).filter(Boolean)
   const lineItems = parseLineItems(lines)
   const total = parseTotal(text)
@@ -344,7 +352,7 @@ async function recognizeWithBestEngine(
     context.drawImage(img, 0, 0, canvas.width, canvas.height)
     onProgress(0.12, 'Kassenbon und Tabellen werden gelesen')
     const text = await recognizeCanvas(canvas, value => onProgress(0.12 + value * 0.68, 'Texterkennung läuft'))
-    if (text.trim() && parseLineItems(text.split(/\\r?\\n/).map(line => line.trim()).filter(Boolean)).length > 0) {
+    if (text.trim() && parseLineItems(text.split(/\r?\n/).map(line => line.trim()).filter(Boolean)).length > 0) {
       return { text, recognition: 'browser-ocr', backend: 'Tesseract.js (Belegprüfung)' }
     }
     tesseractError = new Error('Die erste Texterkennung fand keine plausible Artikelposition.')
@@ -357,7 +365,7 @@ async function recognizeWithBestEngine(
   onProgress(0.84, 'Zweite Erkennung mit lokaler KI')
   try {
     const result: FlorenceOcrResult = await recognizeInvoiceWithAI(image, onProgress)
-    const text = positionedLines(result.labels, result.boxes).join('\\n')
+    const text = positionedLines(result.labels, result.boxes).join('\n')
     if (!text.trim()) throw new Error('Die lokale KI hat keinen lesbaren Text erkannt.')
     return { text, recognition: 'local-ai', backend: result.backend }
   } catch (aiError) {

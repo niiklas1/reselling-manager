@@ -346,6 +346,28 @@ function App() {
 }
 
 
+function friendlyAuthError(error: unknown): string {
+  const detail = error as { message?: string; code?: string; status?: number }
+  const message = (detail?.message || '').toLowerCase()
+  const code = (detail?.code || '').toLowerCase()
+  const status = Number(detail?.status || 0)
+
+  if (code === 'over_email_send_rate_limit' || message.includes('email rate limit exceeded')) {
+    return 'Der E-Mail-Versand ist für unser gesamtes Projekt gerade ausgeschöpft. Supabase erlaubt mit dem eingebauten E-Mail-Dienst nur 2 Bestätigungs- und Passwort-E-Mails pro Stunde – gemeinsam für alle Nutzer. Bitte nicht ständig erneut versuchen. Dauerhaft lösen wir das mit einem eigenen SMTP-Maildienst.'
+  }
+  if (code === 'email_address_not_authorized' || message.includes('email address not authorized')) {
+    return 'Supabase lässt mit dem eingebauten E-Mail-Dienst nur E-Mail-Adressen von Projektmitgliedern zu. Für öffentliche Registrierungen benötigen wir einen eigenen SMTP-Maildienst.'
+  }
+  if (code === 'over_request_rate_limit' || message.includes('too many requests') || (status === 429 && !message.includes('email'))) {
+    return 'Es gab zu viele Authentifizierungsanfragen in kurzer Zeit. Bitte warte einige Minuten und versuche es dann einmal erneut.'
+  }
+  if (message.includes('user already registered') || code === 'user_already_exists') {
+    return 'Für diese E-Mail-Adresse besteht bereits ein Account. Melde dich an oder nutze „Passwort vergessen?“.'
+  }
+  return detail?.message || 'Es ist ein unbekannter Fehler aufgetreten. Bitte versuche es später erneut.'
+}
+
+
 function AuthScreen() {
   const [mode, setMode] = useState<'login' | 'signup' | 'reset'>('login')
   const [email, setEmail] = useState('')
@@ -402,8 +424,7 @@ function AuthScreen() {
         setMode('login')
       }
     } catch (err) {
-      const text = err instanceof Error ? err.message : 'Es ist ein unbekannter Fehler aufgetreten.'
-      setError(text)
+      setError(friendlyAuthError(err))
     } finally {
       setBusy(false)
     }
@@ -465,7 +486,7 @@ function PasswordRecoveryScreen({ onComplete }: { onComplete: () => void }) {
     const { error: updateError } = await supabase.auth.updateUser({ password })
     setBusy(false)
     if (updateError) {
-      setError(updateError.message)
+      setError(friendlyAuthError(updateError))
       return
     }
     setUpdated(true)

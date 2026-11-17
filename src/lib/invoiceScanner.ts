@@ -290,7 +290,10 @@ function parseLineItems(lines: string[]): InvoiceLineItem[] {
     const barcode = lineBarcode || pendingBarcode
     const confidence = candidateConfidence(line, description, quantity, prices, headerIndex >= 0, Boolean(barcode))
     const hasProductLikeDescription = words.length >= 2 || Math.max(...words.map(word => word.length)) >= 6
-    if (!hasProductLikeDescription || confidence < 0.55) continue
+    const hasOcrNoiseSymbols = /[※★◆�]/u.test(line)
+    // Keep otherwise readable product names even when OCR added stray symbols;
+    // lower confidence ensures these candidates are never silently auto-selected.
+    if (!hasProductLikeDescription || confidence < (hasOcrNoiseSymbols ? 0.45 : 0.55)) continue
 
     const lineAmount = prices[prices.length - 1].value
     const unitPrice = quantity > 1

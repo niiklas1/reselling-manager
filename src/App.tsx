@@ -1090,7 +1090,7 @@ function ProductModal({ product, onClose, onSave }: {
       if (verifiedExtraction.lineItems.length > 1 || verifiedExtraction.lineItems.some(line => line.confidence < 0.72)) {
         const initialLines: InvoiceDraftLine[] = verifiedExtraction.lineItems.map(line => ({
           ...line,
-          selected: line.productVerified || (!line.barcode && line.confidence >= 0.72),
+          selected: line.productVerification === 'barcode' || (!line.barcode && !line.productVerification && line.confidence >= 0.72),
           imageUrl: '',
           imageAttribution: '',
           imageLicense: '',
@@ -1242,7 +1242,7 @@ function ProductModal({ product, onClose, onSave }: {
       {invoiceLines.length > 0 ? <div className="invoice-lines-panel full">
         <div className="invoice-lines-heading"><div><strong>{invoiceLines.length} erkannte Positionen</strong><small>Sichere Positionen sind vorausgewählt. Unsichere Erkennungen musst du aktiv auswählen. Prüfe Namen, Stückzahl und Gesamtpreis je Position.</small></div><span>{selectedLines.length} ausgewählt</span></div>
         {invoiceLines.map(line => <div className="invoice-line-card" key={line.id}>
-          <div className="invoice-line-top"><input type="checkbox" checked={line.selected} onChange={e => updateInvoiceLine(line.id,{selected:e.target.checked})}/><input className="invoice-line-name" value={line.description} onChange={e => updateInvoiceLine(line.id,{description:e.target.value})} aria-label="Artikelname"/><span className={line.confidence >= 0.72 ? 'invoice-confidence good' : 'invoice-confidence review'}>{line.productVerified ? 'Katalog bestätigt' : line.confidence >= 0.72 ? 'Sicher' : 'Bitte prüfen'} · {Math.round(line.confidence * 100)}%</span></div>
+          <div className="invoice-line-top"><input type="checkbox" checked={line.selected} onChange={e => updateInvoiceLine(line.id,{selected:e.target.checked})}/><input className="invoice-line-name" value={line.description} onChange={e => updateInvoiceLine(line.id,{description:e.target.value})} aria-label="Artikelname"/><span className={line.productVerification === 'name' ? 'invoice-confidence review' : line.confidence >= 0.72 ? 'invoice-confidence good' : 'invoice-confidence review'}>{line.productVerification === 'barcode' ? 'EAN bestätigt' : line.productVerification === 'name' ? 'Katalogtreffer prüfen' : line.confidence >= 0.72 ? 'Sicher' : 'Bitte prüfen'} · {Math.round(line.confidence * 100)}%</span></div>
           <div className="invoice-line-bottom">
             <label><span>Stück</span><input type="number" min="1" step="1" value={line.quantity} onChange={e => updateInvoiceLine(line.id,{quantity:Number(e.target.value)})}/></label>
             <label><span>Gesamtpreis (€)</span><input type="number" min="0" step="0.01" value={line.amount} onChange={e => updateInvoiceLine(line.id,{amount:Number(e.target.value)})}/></label>

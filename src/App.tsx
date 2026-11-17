@@ -110,6 +110,56 @@ async function readLocalReceipt(path: string): Promise<Blob | null> {
   })
 }
 
+type LocalReceiptRecord = { id: string; blob: Blob; name: string; lastModified: number }
+
+async function readAllLocalReceipts(): Promise<LocalReceiptRecord[]> {
+  const db = await openReceiptsDb()
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction(RECEIPTS_STORE, 'readonly')
+    const store = transaction.objectStore(RECEIPTS_STORE)
+    const keysRequest = store.getAllKeys()
+    const valuesRequest = store.getAll()
+    transaction.oncomplete = () => {
+      try {
+        const keys = keysRequest.result
+        const values = valuesRequest.result
+        if (keys.length !== values.length) throw new Error('Der Belegspeicher konnte nicht vollständig gelesen werden.')
+        const records = keys.map((key, index) => {
+          const blob = values[index]
+          if (typeof key !== 'string' || !(blob instanceof Blob)) throw new Error('Der Belegspeicher enthält einen Datensatz in einem unbekannten Format.')
+          const file = typeof File !== 'undefined' && blob instanceof File ? blob : null
+          return { id: key, blob, name: file?.name || ('beleg-' + (index + 1)), lastModified: file?.lastModified || Date.now() }
+        })
+        db.close()
+        resolve(records)
+      } catch (error) {
+        db.close()
+        reject(error)
+      }
+    }
+    transaction.onerror = () => { db.close(); reject(transaction.error || new Error('Der Belegspeicher konnte nicht gelesen werden.')) }
+    transaction.onabort = () => { db.close(); reject(transaction.error || new Error('Das Lesen des Belegspeichers wurde abgebrochen.')) }
+  })
+}
+
+async function removeLocalReceiptsExcept(keepIds: string[]): Promise<void> {
+  const keep = new Set(keepIds)
+  const db = await openReceiptsDb()
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction(RECEIPTS_STORE, 'readwrite')
+    const store = transaction.objectStore(RECEIPTS_STORE)
+    const keysRequest = store.getAllKeys()
+    keysRequest.onsuccess = () => {
+      for (const key of keysRequest.result) {
+        if (typeof key === 'string' && !keep.has(key)) store.delete(key)
+      }
+    }
+    transaction.oncomplete = () => { db.close(); resolve() }
+    transaction.onerror = () => { db.close(); reject(transaction.error || new Error('Alte Belege konnten nicht bereinigt werden.')) }
+    transaction.onabort = () => { db.close(); reject(transaction.error || new Error('Die Bereinigung wurde abgebrochen.')) }
+  })
+}
+
 async function deleteLocalReceipt(path: string): Promise<void> {
   if (!path.startsWith('local:')) return
   const db = await openReceiptsDb()
@@ -125,6 +175,15 @@ async function deleteLocalReceipt(path: string): Promise<void> {
 type BackupReceipt = { name: string; type: string; data: string }
 type ResellingBackupV1 = { format: 'reselling-manager-backup'; version: 1; createdAt: string; products: Product[]; receipts: Record<string, BackupReceipt> }
 type ResellingBackupV2 = { format: 'reselling-manager-backup'; version: 2; createdAt: string; products: Product[] }
+type BackupReceiptV3 = { id: string; archivePath: string; name: string; type: string; lastModified: number }
+type ResellingBackupV3 = {
+  format: 'reselling-manager-backup'
+  version: 3
+  createdAt: string
+  products: Product[]
+  localStorage: Record<string, string>
+  receipts: BackupReceiptV3[]
+}
 type ZipEntry = { name: string; bytes: Uint8Array }
 
 function crc32(bytes: Uint8Array): number {
@@ -163,29 +222,142 @@ function makeZip(entries: ZipEntry[]): Blob {
   return new Blob([...localParts, ...centralParts, end], { type: 'application/zip' })
 }
 
-async function readZip(file: File): Promise<Record<string, Uint8Array>> {
-  const bytes = new Uint8Array(await file.arrayBuffer())
+function readZipBytes(bytes: Uint8Array): Record<string, Uint8Array> {
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
   const decoder = new TextDecoder()
   const files: Record<string, Uint8Array> = {}
   let offset = 0
+  let entryCount = 0
   while (offset + 30 <= bytes.length && view.getUint32(offset, true) === 0x04034b50) {
     const flags = view.getUint16(offset + 6, true)
     const method = view.getUint16(offset + 8, true)
-    const size = view.getUint32(offset + 18, true)
+    const expectedCrc = view.getUint32(offset + 14, true)
+    const compressedSize = view.getUint32(offset + 18, true)
+    const uncompressedSize = view.getUint32(offset + 22, true)
     const nameLength = view.getUint16(offset + 26, true)
     const extraLength = view.getUint16(offset + 28, true)
-    if ((flags & 0x0008) !== 0 || method !== 0) throw new Error('Dieses ZIP-Backup verwendet ein nicht unterstütztes Kompressionsformat.')
+    if ((flags & 0x0009) !== 0 || method !== 0 || compressedSize !== uncompressedSize) {
+      throw new Error('Dieses ZIP-Backup verwendet ein nicht unterstütztes Kompressionsformat.')
+    }
     const nameStart = offset + 30
-    const name = decoder.decode(bytes.slice(nameStart, nameStart + nameLength))
-    const dataStart = nameStart + nameLength + extraLength
-    const dataEnd = dataStart + size
-    if (dataEnd > bytes.length) throw new Error('Die Backup-Datei ist beschädigt oder unvollständig.')
-    files[name] = bytes.slice(dataStart, dataEnd)
+    const nameEnd = nameStart + nameLength
+    const name = decoder.decode(bytes.slice(nameStart, nameEnd))
+    const dataStart = nameEnd + extraLength
+    const dataEnd = dataStart + compressedSize
+    if (!name || dataEnd > bytes.length || dataStart < nameEnd) throw new Error('Die Backup-Datei ist beschädigt oder unvollständig.')
+    if (Object.prototype.hasOwnProperty.call(files, name)) throw new Error('Die Backup-Datei enthält doppelte Dateieinträge.')
+    const data = bytes.slice(dataStart, dataEnd)
+    if (crc32(data) !== expectedCrc) throw new Error('Die Backup-Datei ist beschädigt: Eine Prüfsumme stimmt nicht.')
+    files[name] = data
     offset = dataEnd
+    entryCount++
+    if (entryCount > 10000) throw new Error('Das Backup enthält ungewöhnlich viele Dateien.')
   }
-  if (!files['backup.json']) throw new Error('In der ZIP-Datei wurde keine backup.json gefunden.')
+  if (!files['backup.json']) throw new Error('In der Datei wurde keine gültige backup.json gefunden.')
   return files
+}
+
+async function readZip(file: File): Promise<Record<string, Uint8Array>> {
+  return readZipBytes(new Uint8Array(await file.arrayBuffer()))
+}
+
+async function extractZipFromPdf(file: File): Promise<Uint8Array> {
+  const { PDFDocument } = await import('@cantoo/pdf-lib')
+  const pdf = await PDFDocument.load(new Uint8Array(await file.arrayBuffer()))
+  const attachments = await pdf.getAttachments()
+  const backupAttachment = attachments.find((attachment: { name: string }) =>
+    attachment.name === 'reselling-manager-backup.zip'
+  )
+  if (!backupAttachment) {
+    throw new Error('In dieser PDF wurde kein vollständiges Reselling-Manager-Backup gefunden. Verwende bitte die unveränderte Original-PDF.')
+  }
+  return new Uint8Array(backupAttachment.data)
+}
+
+function pdfSafeText(value: string): string {
+  return value.normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/€/g, ' EUR ')
+    .replace(/£/g, ' GBP ')
+    .replace(/[–—•·]/g, '-')
+    .replace(/[^\x20-\x7E]/g, '?')
+}
+
+async function createBackupPdf(archive: Blob, products: Product[], receiptCount: number): Promise<File> {
+  const { PDFDocument, StandardFonts, rgb } = await import('@cantoo/pdf-lib')
+  const pdf = await PDFDocument.create()
+  pdf.setTitle('Reselling Manager - Vollstaendiges Backup')
+  pdf.setSubject('Vollstaendige Datensicherung inklusive Originalbelege')
+  pdf.setCreator('Reselling Manager')
+  pdf.setCreationDate(new Date())
+  const regular = await pdf.embedFont(StandardFonts.Helvetica)
+  const bold = await pdf.embedFont(StandardFonts.HelveticaBold)
+  const pageSize: [number, number] = [595.28, 841.89]
+  const margin = 46
+  const maxWidth = pageSize[0] - margin * 2
+  const ink = rgb(0.12, 0.15, 0.22)
+  const muted = rgb(0.38, 0.42, 0.49)
+  const accent = rgb(0.25, 0.32, 0.75)
+  let page = pdf.addPage(pageSize)
+  let y = 790
+
+  const addPage = () => { page = pdf.addPage(pageSize); y = 790 }
+  const write = (raw: string, size = 9, font = regular, color = ink, indent = 0) => {
+    const text = pdfSafeText(raw)
+    const words = text.split(/\s+/).filter(Boolean)
+    const lineHeight = size + 4
+    let line = ''
+    const draw = (value: string) => {
+      if (y < 54 + lineHeight) addPage()
+      page.drawText(value, { x: margin + indent, y, size, font, color })
+      y -= lineHeight
+    }
+    for (const word of words) {
+      const candidate = line ? line + ' ' + word : word
+      if (line && font.widthOfTextAtSize(candidate, size) > maxWidth - indent) {
+        draw(line)
+        line = word
+      } else {
+        line = candidate
+      }
+    }
+    if (line) draw(line)
+  }
+  const gap = (amount = 6) => { y -= amount; if (y < 58) addPage() }
+
+  write('RESELLING MANAGER', 9, bold, accent)
+  gap(15)
+  write('Vollstaendiges Backup', 23, bold, ink)
+  write('Sicherung erstellt am: ' + new Date().toLocaleString('de-DE'), 9, regular, muted)
+  gap(18)
+  write('Dieses PDF enthaelt eine eingebettete Wiederherstellungsdatei. Zum Wiederherstellen dieses PDF in der Website unter Einstellungen > Backup hochladen auswaehlen.', 10, bold)
+  gap(12)
+  write('INHALT DER SICHERUNG', 10, bold, accent)
+  write('Produkte: ' + products.length)
+  write('Originalbelege im lokalen Belegspeicher: ' + receiptCount)
+  write('Gespeicherte Produktdaten, Verkaufsdaten, Kosten, Mengen, Kategorien, Plattformen und Bildquellen')
+  write('Alle gespeicherten Website-Einstellungen und lokale Speicherwerte')
+  gap(18)
+  write('PRODUKTUEBERSICHT', 11, bold, accent)
+  if (products.length === 0) write('Es waren keine Produkte gespeichert.')
+  for (const [index, product] of products.entries()) {
+    gap(4)
+    write((index + 1) + '. ' + (product.name || 'Unbenanntes Produkt') + ' - ' + product.status, 10, bold)
+    write('Kategorie: ' + (product.category || '-') + ' | Plattform: ' + (product.platform || '-') + ' | Menge: ' + (product.quantity || 1))
+    write('Einkauf: ' + money(product.purchasePrice) + ' | Verkauf: ' + money(product.salePrice) + ' | Versand: ' + money(product.shipping) + ' | Gebuehren: ' + money(product.fees))
+    write('Kaufdatum: ' + (product.purchaseDate || '-') + ' | Verkaufsdatum: ' + (product.saleDate || '-'))
+  }
+  gap(18)
+  write('WICHTIG: Die Wiederherstellungsdatei liegt als PDF-Anhang mit dem Namen reselling-manager-backup.zip in diesem Dokument. Bitte dieses PDF unveraendert in Dateien sichern und beim Import wieder auswaehlen. Nicht drucken oder ueber einen PDF-Editor neu exportieren.', 9, bold)
+  await pdf.attach(new Uint8Array(await archive.arrayBuffer()), 'reselling-manager-backup.zip', {
+    mimeType: 'application/zip',
+    description: 'Vollstaendige Wiederherstellungsdatei mit Produktdaten, Website-Einstellungen und Originalbelegen.',
+    creationDate: new Date(),
+    modificationDate: new Date(),
+  })
+  const bytes = await pdf.save()
+  const fileName = 'reselling-manager-backup-' + new Date().toISOString().slice(0, 10) + '.pdf'
+  return new File([bytes], fileName, { type: 'application/pdf' })
 }
 
 function blobToDataUrl(blob: Blob): Promise<string> {
@@ -218,6 +390,7 @@ function App() {
   const [mobileNav, setMobileNav] = useState(false)
   const [showHelp, setShowHelp] = useState(false)
   const [backupBusy, setBackupBusy] = useState(false)
+  const [pendingBackupFile, setPendingBackupFile] = useState<File | null>(null)
   const [currency, setCurrency] = useState(() => localStorage.getItem('reselling-currency') || 'EUR')
   const [receiptProduct, setReceiptProduct] = useState<Product | null>(null)
   const [backupMessage, setBackupMessage] = useState('')
@@ -228,6 +401,10 @@ function App() {
   })
 
   activeCurrency = currency
+
+  useEffect(() => {
+    void navigator.storage?.persist?.().catch(() => false)
+  }, [])
 
   useEffect(() => {
     localStorage.setItem('reselling-currency', currency)
@@ -253,50 +430,87 @@ function App() {
     setBackupBusy(true)
     setBackupMessage('')
     try {
+      const receipts = await readAllLocalReceipts()
       const entries: ZipEntry[] = []
-      const backupProducts = products.map(product => ({ ...product }))
-      const receiptPaths = [...new Set(products.map(product => product.receiptPath).filter(path => path.startsWith('local:')))]
-      for (const [index, path] of receiptPaths.entries()) {
-        const blob = await readLocalReceipt(path)
-        if (!blob) throw new Error('Ein gespeicherter Beleg fehlt. Das Backup wurde nicht erstellt, damit es vollständig bleibt.')
-        const extension = blob.type === 'application/pdf' ? 'pdf' : blob.type.startsWith('image/') ? (blob.type.split('/')[1] || 'img').replace('jpeg', 'jpg') : 'bin'
-        const archivePath = 'receipts/' + (index + 1) + '.' + extension
-        const productMatches = backupProducts.filter(product => product.receiptPath === path)
-        productMatches.forEach(product => { product.receiptPath = 'backup:' + archivePath })
-        entries.push({ name: archivePath, bytes: new Uint8Array(await blob.arrayBuffer()) })
+      const archivePathById = new Map<string, string>()
+      const receiptManifest: BackupReceiptV3[] = []
+      for (const [index, receipt] of receipts.entries()) {
+        const originalExtension = receipt.name.includes('.') ? receipt.name.split('.').pop()!.toLowerCase().replace(/[^a-z0-9]/g, '') : ''
+        const typeExtension = receipt.blob.type === 'application/pdf' ? 'pdf' : receipt.blob.type.startsWith('image/') ? (receipt.blob.type.split('/')[1] || 'img').replace('jpeg', 'jpg') : ''
+        const extension = originalExtension || typeExtension || 'bin'
+        const archivePath = 'receipts/receipt-' + (index + 1) + '.' + extension
+        archivePathById.set(receipt.id, archivePath)
+        receiptManifest.push({ id: receipt.id, archivePath, name: receipt.name, type: receipt.blob.type || 'application/octet-stream', lastModified: receipt.lastModified })
+        entries.push({ name: archivePath, bytes: new Uint8Array(await receipt.blob.arrayBuffer()) })
       }
-      const manifest: ResellingBackupV2 = { format: 'reselling-manager-backup', version: 2, createdAt: new Date().toISOString(), products: backupProducts }
-      entries.unshift({ name: 'backup.json', bytes: new TextEncoder().encode(JSON.stringify(manifest, null, 2)) })
-      const blob = makeZip(entries)
-      const fileName = 'reselling-manager-backup-' + new Date().toISOString().slice(0, 10) + '.zip'
-      const backupFile = new File([blob], fileName, { type: 'application/zip' })
-      let shared = false
-      if (navigator.share && navigator.canShare?.({ files: [backupFile] })) {
-        try {
-          await navigator.share({ files: [backupFile], title: 'Reselling-Manager-Backup' })
-          shared = true
-        } catch (shareError) {
-          if (shareError instanceof DOMException && shareError.name === 'AbortError') throw shareError
-          // If the browser rejects file sharing after the asynchronous backup build, use a normal download.
-        }
+
+      const backupProducts = products.map(product => {
+        if (!product.receiptPath) return { ...product }
+        if (!product.receiptPath.startsWith('local:')) throw new Error('Ein Produkt verweist auf einen unbekannten Belegspeicher. Das Backup wurde nicht erstellt, damit keine Daten fehlen.')
+        const archivePath = archivePathById.get(product.receiptPath.slice(6))
+        if (!archivePath) throw new Error('Ein zugeordneteter Originalbeleg fehlt. Das Backup wurde nicht erstellt, damit es vollständig bleibt.')
+        return { ...product, receiptPath: 'backup:' + archivePath }
+      })
+
+      const storedValues: Record<string, string> = {}
+      for (let index = 0; index < localStorage.length; index++) {
+        const key = localStorage.key(index)
+        if (key) storedValues[key] = localStorage.getItem(key) ?? ''
       }
-      if (!shared) {
-        const url = URL.createObjectURL(blob)
-        const link = document.createElement('a')
-        link.href = url
-        link.download = fileName
-        document.body.appendChild(link)
-        link.click()
-        link.remove()
-        window.setTimeout(() => URL.revokeObjectURL(url), 60000)
+      storedValues[PRODUCTS_STORAGE_KEY] = JSON.stringify(backupProducts)
+      storedValues['reselling-currency'] = currency
+      storedValues['reselling-theme'] = theme
+
+      const manifest: ResellingBackupV3 = {
+        format: 'reselling-manager-backup',
+        version: 3,
+        createdAt: new Date().toISOString(),
+        products: backupProducts,
+        localStorage: storedValues,
+        receipts: receiptManifest,
       }
-      setBackupMessage('ZIP-Backup erstellt: ' + products.length + ' Produkte und ' + receiptPaths.length + ' Originalbelege. Auf iPhone/iPad kannst du es über „In Dateien sichern“ ablegen.')
+      entries.unshift({ name: 'backup.json', bytes: new TextEncoder().encode(JSON.stringify(manifest)) })
+      const archive = makeZip(entries)
+      const backupFile = await createBackupPdf(archive, products, receipts.length)
+      setPendingBackupFile(backupFile)
+      setBackupMessage('PDF-Backup fertig. Tippe jetzt auf „PDF in Dateien sichern“, um das iOS-Teilen-Menü zu öffnen.')
     } catch (error) {
-      if (error instanceof DOMException && error.name === 'AbortError') setBackupMessage('Speichern wurde abgebrochen.')
-      else setBackupMessage(error instanceof Error ? error.message : 'Backup konnte nicht erstellt werden.')
+      if (error instanceof DOMException && error.name === 'AbortError') setBackupMessage('Speichern wurde abgebrochen. Es wurde keine Datei als gesichert bestätigt.')
+      else setBackupMessage(error instanceof Error ? error.message : 'PDF-Backup konnte nicht erstellt werden.')
     } finally {
       setBackupBusy(false)
     }
+  }
+
+  async function shareBackupFile() {
+    const file = pendingBackupFile
+    if (!file) return
+    if (!navigator.share || typeof navigator.canShare !== 'function' || !navigator.canShare({ files: [file] })) {
+      setBackupMessage('Teilen von Dateien wird in diesem Browser nicht unterstützt. Nutze „PDF herunterladen“ und anschließend das Teilen-Menü der PDF in Safari.')
+      return
+    }
+    try {
+      // navigator.share must be invoked immediately in the tap handler, before any await.
+      const shareResult = navigator.share({ files: [file], title: 'Reselling Manager Backup' })
+      await shareResult
+      setBackupMessage('Teilen-Menü geschlossen. Wähle dort „In Dateien sichern“, wenn du die PDF ablegen möchtest.')
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') setBackupMessage('Teilen abgebrochen. Die fertige PDF bleibt hier bereit.')
+      else setBackupMessage('Das Teilen-Menü konnte nicht geöffnet werden. Nutze alternativ „PDF herunterladen“.')
+    }
+  }
+
+  function downloadBackupFile() {
+    if (!pendingBackupFile) return
+    const url = URL.createObjectURL(pendingBackupFile)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = pendingBackupFile.name
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+    window.setTimeout(() => URL.revokeObjectURL(url), 60000)
+    setBackupMessage('PDF-Download wurde gestartet. Auf dem iPhone kannst du die Datei anschließend in Safari über Teilen > In Dateien sichern ablegen.')
   }
 
   async function restoreBackup(file?: File) {
@@ -304,26 +518,65 @@ function App() {
     setBackupBusy(true)
     setBackupMessage('')
     const createdPaths: string[] = []
+    let restoreCommitted = false
     try {
       let restoredProducts: Product[]
-      const receiptFiles: Record<string, { name: string; type: string; bytes: Uint8Array }> = {}
-      if (file.name.toLowerCase().endsWith('.zip') || file.type === 'application/zip' || file.type === 'application/x-zip-compressed') {
+      const receiptFiles: Record<string, { name: string; type: string; bytes: Uint8Array; lastModified?: number }> = {}
+      let storageSnapshot: Record<string, string> | null = null
+      const lowerName = file.name.toLowerCase()
+
+      if (lowerName.endsWith('.pdf') || file.type === 'application/pdf') {
+        const archiveBytes = await extractZipFromPdf(file)
+        const archive = readZipBytes(archiveBytes)
+        const manifest = JSON.parse(new TextDecoder().decode(archive['backup.json'])) as Partial<ResellingBackupV3> & { version?: number }
+        if (manifest.format !== 'reselling-manager-backup' || !Array.isArray(manifest.products)) throw new Error('Die PDF enthält keine gültigen Reselling-Manager-Produktdaten.')
+        if (manifest.version !== 3 || !Array.isArray(manifest.receipts) || !manifest.localStorage || typeof manifest.localStorage !== 'object') {
+          throw new Error('Die PDF enthält ein älteres oder unvollständiges Backupformat. Bitte die Original-PDF eines aktuellen Backups verwenden.')
+        }
+        restoredProducts = manifest.products
+        storageSnapshot = manifest.localStorage
+        for (const receipt of manifest.receipts) {
+          if (!receipt || typeof receipt.archivePath !== 'string' || typeof receipt.name !== 'string' || typeof receipt.type !== 'string') {
+            throw new Error('Die PDF enthält einen ungültigen Belegdatensatz.')
+          }
+          const data = archive[receipt.archivePath]
+          if (!data) throw new Error('Ein Originalbeleg fehlt in der PDF. Deine bisherigen Daten bleiben unverändert.')
+          receiptFiles[receipt.archivePath] = { name: receipt.name, type: receipt.type, bytes: data, lastModified: receipt.lastModified }
+        }
+      } else if (lowerName.endsWith('.zip') || file.type === 'application/zip' || file.type === 'application/x-zip-compressed') {
         const archive = await readZip(file)
-        const manifest = JSON.parse(new TextDecoder().decode(archive['backup.json'])) as Partial<ResellingBackupV2>
-        if (manifest.format !== 'reselling-manager-backup' || manifest.version !== 2 || !Array.isArray(manifest.products)) throw new Error('Diese ZIP-Datei ist kein gültiges Reselling-Manager-Backup.')
-        restoredProducts = manifest.products as Product[]
-        for (const product of restoredProducts) {
-          const path = typeof product.receiptPath === 'string' && product.receiptPath.startsWith('backup:') ? product.receiptPath.slice(7) : ''
-          if (!path) continue
-          const data = archive[path]
-          if (!data) throw new Error('Ein zugeordneteter Beleg fehlt im Backup. Deine bisherigen Daten bleiben unverändert.')
-          const extension = path.split('.').pop()?.toLowerCase() || 'bin'
-          const type = extension === 'pdf' ? 'application/pdf' : extension === 'jpg' || extension === 'jpeg' ? 'image/jpeg' : extension === 'png' ? 'image/png' : extension === 'webp' ? 'image/webp' : 'application/octet-stream'
-          receiptFiles[path] = { name: path.split('/').pop() || 'beleg', type, bytes: data }
+        const manifestBytes = archive['backup.json']
+        if (!manifestBytes) throw new Error('In der ZIP-Datei wurde keine backup.json gefunden.')
+        const manifest = JSON.parse(new TextDecoder().decode(manifestBytes)) as Partial<ResellingBackupV3> & { version?: number }
+        if (manifest.format !== 'reselling-manager-backup' || !Array.isArray(manifest.products)) throw new Error('Diese ZIP-Datei ist kein gültiges Reselling-Manager-Backup.')
+        restoredProducts = manifest.products
+        if (manifest.version === 3) {
+          if (!Array.isArray(manifest.receipts) || !manifest.localStorage || typeof manifest.localStorage !== 'object') throw new Error('Das Backup enthält unvollständige Speicherinformationen.')
+          storageSnapshot = manifest.localStorage
+          for (const receipt of manifest.receipts) {
+            if (!receipt || typeof receipt.archivePath !== 'string' || typeof receipt.name !== 'string' || typeof receipt.type !== 'string') throw new Error('Das Backup enthält einen ungültigen Belegdatensatz.')
+            const data = archive[receipt.archivePath]
+            if (!data) throw new Error('Ein Originalbeleg fehlt im Backup. Deine bisherigen Daten bleiben unverändert.')
+            receiptFiles[receipt.archivePath] = { name: receipt.name, type: receipt.type, bytes: data, lastModified: receipt.lastModified }
+          }
+        } else if (manifest.version === 2) {
+          for (const product of restoredProducts) {
+            const path = typeof product.receiptPath === 'string' && product.receiptPath.startsWith('backup:') ? product.receiptPath.slice(7) : ''
+            if (!path) continue
+            const data = archive[path]
+            if (!data) throw new Error('Ein zugeordneter Beleg fehlt im Backup. Deine bisherigen Daten bleiben unverändert.')
+            const extension = path.split('.').pop()?.toLowerCase() || 'bin'
+            const type = extension === 'pdf' ? 'application/pdf' : extension === 'jpg' || extension === 'jpeg' ? 'image/jpeg' : extension === 'png' ? 'image/png' : extension === 'webp' ? 'image/webp' : 'application/octet-stream'
+            receiptFiles[path] = { name: path.split('/').pop() || 'beleg', type, bytes: data }
+          }
+        } else {
+          throw new Error('Diese ZIP-Datei verwendet eine nicht unterstützte Backup-Version.')
         }
       } else {
         const parsed = JSON.parse(await file.text()) as Partial<ResellingBackupV1>
-        if (parsed.format !== 'reselling-manager-backup' || parsed.version !== 1 || !Array.isArray(parsed.products) || !parsed.receipts || typeof parsed.receipts !== 'object') throw new Error('Diese Datei ist weder ein ZIP-Backup noch ein gültiges älteres JSON-Backup.')
+        if (parsed.format !== 'reselling-manager-backup' || parsed.version !== 1 || !Array.isArray(parsed.products) || !parsed.receipts || typeof parsed.receipts !== 'object') {
+          throw new Error('Diese Datei ist weder ein PDF-Backup noch ein gültiges älteres JSON-Backup.')
+        }
         restoredProducts = parsed.products
         for (const [path, receipt] of Object.entries(parsed.receipts)) {
           if (!receipt || typeof receipt.data !== 'string' || typeof receipt.name !== 'string' || typeof receipt.type !== 'string') throw new Error('Das JSON-Backup enthält einen beschädigten Beleg.')
@@ -331,26 +584,58 @@ function App() {
           receiptFiles[path] = { name: receipt.name, type: receipt.type, bytes: new Uint8Array(await blob.arrayBuffer()) }
         }
       }
+
       if (!restoredProducts.every(product => product && typeof product.id === 'string' && typeof product.name === 'string')) throw new Error('Das Backup enthält ungültige Produktdaten.')
-      if (!window.confirm('Das Backup ersetzt alle aktuell gespeicherten Produkte und Belege. Möchtest du fortfahren?')) return
+      if (!window.confirm('Das Backup ersetzt alle aktuell gespeicherten Produkte, Einstellungen und Originalbelege. Möchtest du fortfahren?')) return
+
       const newPaths: Record<string, string> = {}
       for (const [archivePath, receipt] of Object.entries(receiptFiles)) {
-        const path = await saveLocalReceipt(new File([receipt.bytes], receipt.name, { type: receipt.type }))
+        const fileOptions: FilePropertyBag = { type: receipt.type }
+        if (typeof receipt.lastModified === 'number' && Number.isFinite(receipt.lastModified)) fileOptions.lastModified = receipt.lastModified
+        const path = await saveLocalReceipt(new File([receipt.bytes], receipt.name, fileOptions))
         createdPaths.push(path)
         newPaths[archivePath] = path
       }
+
       const finalProducts = restoredProducts.map(product => {
         const oldPath = typeof product.receiptPath === 'string' ? product.receiptPath : ''
         const key = oldPath.startsWith('backup:') ? oldPath.slice(7) : oldPath
         if (key && receiptFiles[key] && !newPaths[key]) throw new Error('Ein Beleg konnte nicht wiederhergestellt werden.')
-        if (oldPath.startsWith('local:') && !newPaths[oldPath]) throw new Error('Ein Beleg fehlt im Backup. Deine bisherigen Daten bleiben unverändert.')
+        if ((oldPath.startsWith('local:') || oldPath.startsWith('backup:')) && !newPaths[key]) throw new Error('Ein Beleg fehlt im Backup. Deine bisherigen Daten bleiben unverändert.')
         return { ...product, receiptPath: newPaths[key] || '' }
       })
-      localStorage.setItem(PRODUCTS_STORAGE_KEY, JSON.stringify(finalProducts))
+
+      const previousStorage: Record<string, string> = {}
+      for (let index = 0; index < localStorage.length; index++) {
+        const key = localStorage.key(index)
+        if (key) previousStorage[key] = localStorage.getItem(key) ?? ''
+      }
+      try {
+        if (storageSnapshot) {
+          const nextStorage = { ...storageSnapshot, [PRODUCTS_STORAGE_KEY]: JSON.stringify(finalProducts) }
+          localStorage.clear()
+          for (const [key, value] of Object.entries(nextStorage)) localStorage.setItem(key, value)
+        } else {
+          localStorage.setItem(PRODUCTS_STORAGE_KEY, JSON.stringify(finalProducts))
+        }
+      } catch (storageError) {
+        localStorage.clear()
+        for (const [key, value] of Object.entries(previousStorage)) localStorage.setItem(key, value)
+        throw storageError
+      }
+
+      if (storageSnapshot) {
+        const restoredCurrency = storageSnapshot['reselling-currency']
+        const restoredTheme = storageSnapshot['reselling-theme']
+        if (restoredCurrency && ['EUR', 'USD', 'GBP', 'CHF'].includes(restoredCurrency)) setCurrency(restoredCurrency)
+        if (restoredTheme === 'light' || restoredTheme === 'dark') setTheme(restoredTheme)
+      }
       setProducts(finalProducts)
-      setBackupMessage('Wiederherstellung erfolgreich: ' + finalProducts.length + ' Produkte und ' + Object.keys(newPaths).length + ' Originalbelege importiert.')
+      restoreCommitted = true
+      await removeLocalReceiptsExcept(createdPaths.map(path => path.slice(6))).catch(() => undefined)
+      setBackupMessage('Wiederherstellung erfolgreich: ' + finalProducts.length + ' Produkte und ' + Object.keys(newPaths).length + ' Originalbelege importiert. Einstellungen wurden ebenfalls übernommen.')
     } catch (error) {
-      await Promise.all(createdPaths.map(path => deleteLocalReceipt(path).catch(() => undefined)))
+      if (!restoreCommitted) await Promise.all(createdPaths.map(path => deleteLocalReceipt(path).catch(() => undefined)))
       setBackupMessage(error instanceof Error ? error.message : 'Backup konnte nicht wiederhergestellt werden.')
     } finally {
       setBackupBusy(false)
@@ -492,7 +777,7 @@ function App() {
           )}
 
           {section === 'Auswertungen' && <section className="panel coming-panel"><div className="coming-icon"><Sparkles size={23}/></div><h2>Auswertungen</h2><p>Hier bauen wir deine Monatsübersichten, Gewinnentwicklung und Plattformvergleiche auf.</p><span className="coming-tag">WIRD ALS NÄCHSTES ERWEITERT</span></section>}
-          {section === 'Einstellungen' && <section className="panel settings-panel"><div className="panel-title-row"><div><h2>Lokaler Workspace</h2><p>Die App läuft ohne Konto, Anmeldung oder E-Mail-Versand.</p></div></div><div className="setting-row"><div><strong>Betriebsmodus</strong><span>Persönliche Nutzung auf diesem Gerät.</span></div><span className="setting-pill">Ohne Login</span></div><div className="setting-row"><div><strong>Erscheinungsbild</strong><span>Zwischen dem dunklen Neon-Look und dem hellen Design wechseln.</span></div><button className="setting-toggle" onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}>{theme === 'dark' ? <Sun size={15}/> : <Moon size={15}/>} {theme === 'dark' ? 'Helles Design' : 'Dark Mode'}</button></div><div className="setting-row"><div><strong>Datenspeicherung</strong><span>Produkte werden nur in diesem Browser gespeichert. Es gibt keine Cloud-Synchronisierung.</span></div><span className="setting-pill">Lokal</span></div><div className="setting-row"><div><strong>Belege</strong><span>PDFs und Bilder werden im lokalen Browserspeicher dieses Geräts abgelegt.</span></div><span className="setting-pill">Auf diesem Gerät</span></div><div className="backup-section"><div className="backup-heading"><div><strong>Backup erstellen</strong><span>Sichere Produkte und Originalbelege als ZIP-Datei. Du kannst sie später hier wieder hochladen.</span></div><HardDrive size={20}/></div><div className="backup-actions"><button className="button-primary" onClick={() => void createBackup()} disabled={backupBusy}><ArrowDownToLine size={15}/>{backupBusy ? 'Bitte warten …' : 'Backup-Datei erstellen'}</button><button className="button-secondary" onClick={() => backupInput.current?.click()} disabled={backupBusy}><FileUp size={15}/> Backup hochladen</button><input ref={backupInput} type="file" accept=".zip,application/zip,.json,application/json,application/octet-stream" hidden onChange={e => void restoreBackup(e.target.files?.[0])}/></div>{backupMessage && <p className="backup-message" role="status">{backupMessage}</p>}<small>Es entsteht eine normale ZIP-Datei mit backup.json und separaten Originalbelegen. Ältere JSON-Backups bleiben importierbar. Beim Wiederherstellen werden die aktuellen Daten ersetzt.</small></div><div className="setting-row"><div><strong>Währung</strong><span>Wähle die Währung, in der Beträge angezeigt werden. Zahlenwerte werden dabei nicht umgerechnet.</span></div><select className="currency-select" value={currency} onChange={e => setCurrency(e.target.value)} aria-label="Anzeigewährung"><option value="EUR">Euro (€)</option><option value="USD">US-Dollar ($)</option><option value="GBP">Britisches Pfund (£)</option><option value="CHF">Schweizer Franken (CHF)</option></select></div><div className="setting-row"><div><strong>App-Version</strong><span>Reselling Manager – Invoice Studio</span></div><span className="setting-pill">0.3.0 Local</span></div></section>}
+          {section === 'Einstellungen' && <section className="panel settings-panel"><div className="panel-title-row"><div><h2>Lokaler Workspace</h2><p>Die App läuft ohne Konto, Anmeldung oder E-Mail-Versand.</p></div></div><div className="setting-row"><div><strong>Betriebsmodus</strong><span>Persönliche Nutzung auf diesem Gerät.</span></div><span className="setting-pill">Ohne Login</span></div><div className="setting-row"><div><strong>Erscheinungsbild</strong><span>Zwischen dem dunklen Neon-Look und dem hellen Design wechseln.</span></div><button className="setting-toggle" onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}>{theme === 'dark' ? <Sun size={15}/> : <Moon size={15}/>} {theme === 'dark' ? 'Helles Design' : 'Dark Mode'}</button></div><div className="setting-row"><div><strong>Datenspeicherung</strong><span>Produkte werden nur in diesem Browser gespeichert. Es gibt keine Cloud-Synchronisierung.</span></div><span className="setting-pill">Lokal</span></div><div className="setting-row"><div><strong>Belege</strong><span>PDFs und Bilder werden im lokalen Browserspeicher dieses Geräts abgelegt.</span></div><span className="setting-pill">Auf diesem Gerät</span></div><div className="backup-section"><div className="backup-heading"><div><strong>Vollständiges PDF-Backup</strong><span>Sichere Produkte, Website-Einstellungen und sämtliche gespeicherten Originalbelege in einer einzigen PDF-Datei. Die Wiederherstellungsdaten sind in der PDF eingebettet.</span></div><HardDrive size={20}/></div><div className="backup-actions"><button className="button-primary" onClick={() => void createBackup()} disabled={backupBusy}><ArrowDownToLine size={15}/>{backupBusy ? 'PDF wird erstellt …' : 'PDF-Backup erstellen'}</button><button className="button-secondary" onClick={() => backupInput.current?.click()} disabled={backupBusy}><FileUp size={15}/> PDF / Backup importieren</button><input ref={backupInput} type="file" accept=".pdf,application/pdf,.zip,application/zip,.json,application/json,application/octet-stream" hidden onChange={e => void restoreBackup(e.target.files?.[0])}/></div>{pendingBackupFile && <div className="backup-actions"><button className="button-primary" onClick={() => void shareBackupFile()}><ArrowUpRight size={15}/> PDF in Dateien sichern / teilen</button><button className="button-secondary" onClick={downloadBackupFile}><ArrowDownToLine size={15}/> PDF herunterladen</button></div>}{backupMessage && <p className="backup-message" role="status">{backupMessage}</p>}<small>Auf dem iPhone im Teilen-Menü „In Dateien sichern“ wählen. Beim Wiederherstellen die unveränderte PDF auswählen. Ältere ZIP- und JSON-Backups bleiben ebenfalls importierbar.</small></div><div className="setting-row"><div><strong>Währung</strong><span>Wähle die Währung, in der Beträge angezeigt werden. Zahlenwerte werden dabei nicht umgerechnet.</span></div><select className="currency-select" value={currency} onChange={e => setCurrency(e.target.value)} aria-label="Anzeigewährung"><option value="EUR">Euro (€)</option><option value="USD">US-Dollar ($)</option><option value="GBP">Britisches Pfund (£)</option><option value="CHF">Schweizer Franken (CHF)</option></select></div><div className="setting-row"><div><strong>App-Version</strong><span>Reselling Manager – Invoice Studio</span></div><span className="setting-pill">0.3.0 Local</span></div></section>}
           <footer className="page-footer">Reselling Manager <span>·</span> Einfach den Überblick behalten.</footer>
         </div>
       </main>

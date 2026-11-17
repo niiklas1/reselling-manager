@@ -156,10 +156,12 @@ export async function enrichInvoiceProductNames(lines: InvoiceLineItem[]): Promi
   let enriched = lines.map(line => {
     if (!line.barcode) return line
     const item = barcodeMatches.get(line.barcode)
-    if (!item?.title) return line
+    if (!item?.title) return { ...line, confidence: Math.min(line.confidence, 0.69) }
     return { ...line, description: item.title.trim(), confidence: 0.99, productVerified: true }
   })
-  if (enriched.some(line => line.productVerified)) return enriched
+  // Do not spend a second trial API request on a receipt that already had a barcode.
+  // A labelled but unresolved barcode remains unverified and is sent to manual review.
+  if (codes.length || enriched.some(line => line.productVerified)) return enriched
 
   // One text query per receipt at most; a strict similarity threshold rejects unrelated hits.
   const candidateIndex = enriched.findIndex(line => line.description.trim().length >= 5 && line.confidence >= 0.55)

@@ -556,7 +556,7 @@ function ProductModal({ product, userId, onClose, onSave }: {
   product: Product | null
   userId: string
   onClose: () => void
-  onSave: (p: Product, invoiceFile?: File | null) => Promise<boolean>
+  onSave: (products: Product[], invoiceFile?: File | null) => Promise<boolean>
 }) {
   const [name, setName] = useState(product?.name || '')
   const [category, setCategory] = useState(product?.category || '')
@@ -575,6 +575,7 @@ function ProductModal({ product, userId, onClose, onSave }: {
   const [receiptPath, setReceiptPath] = useState(product?.receiptPath || '')
   const [receiptUrl, setReceiptUrl] = useState('')
   const [invoiceFile, setInvoiceFile] = useState<File | null>(null)
+  const [invoiceLines, setInvoiceLines] = useState<InvoiceDraftLine[]>([])
   const [showForm, setShowForm] = useState(Boolean(product))
   const [scanBusy, setScanBusy] = useState(false)
   const [scanProgress, setScanProgress] = useState(0)
@@ -583,11 +584,15 @@ function ProductModal({ product, userId, onClose, onSave }: {
   const [ocrText, setOcrText] = useState('')
   const [imageResults, setImageResults] = useState<ProductImageResult[]>([])
   const [imageBusy, setImageBusy] = useState(false)
+  const [imageOptionsVisible, setImageOptionsVisible] = useState(false)
   const [imageError, setImageError] = useState('')
   const [saving, setSaving] = useState(false)
   const cameraInput = useRef<HTMLInputElement>(null)
   const fileInput = useRef<HTMLInputElement>(null)
   const estimated = Number(salePrice || 0) - Number(purchasePrice || 0) - Number(shipping || 0) - Number(fees || 0)
+  const selectedLines = invoiceLines.filter(line => line.selected)
+  const selectedLineTotal = selectedLines.reduce((sum, line) => sum + Number(line.amount || 0), 0)
+  const selectedLineQuantity = selectedLines.reduce((sum, line) => sum + Math.max(1, Number(line.quantity || 1)), 0)
 
   useEffect(() => {
     if (!receiptPath) return
@@ -607,11 +612,39 @@ function ProductModal({ product, userId, onClose, onSave }: {
         setImageAttribution(results[0].creator)
         setImageLicense(results[0].license)
       }
-      if (!results.length) setImageError('Keine passenden frei nutzbaren Bildvorschläge gefunden. Du kannst später ein Bild ergänzen.')
+      if (!results.length) setImageError('Kein passendes frei kommerziell nutzbares Bild gefunden. Du kannst Google Bilder öffnen oder später ein eigenes Bild hochladen.')
     } catch (error) {
       setImageError(error instanceof Error ? error.message : 'Bildsuche fehlgeschlagen.')
     } finally {
       setImageBusy(false)
+    }
+  }
+
+  function updateInvoiceLine(id: string, patch: Partial<InvoiceDraftLine>) {
+    setInvoiceLines(current => current.map(line => line.id === id ? { ...line, ...patch } : line))
+  }
+
+  async function toggleLineImageOptions(line: InvoiceDraftLine) {
+    if (line.showImageOptions) {
+      updateInvoiceLine(line.id, { showImageOptions: false })
+      return
+    }
+    updateInvoiceLine(line.id, { showImageOptions: true })
+    if (!line.imageOptions.length && !line.imageLoading) {
+      updateInvoiceLine(line.id, { imageLoading: true })
+      try {
+        const results = await searchProductImages(line.description)
+        setInvoiceLines(current => current.map(item => item.id === line.id ? {
+          ...item,
+          imageOptions: results,
+          imageLoading: false,
+          imageUrl: item.imageUrl || results[0]?.url || '',
+          imageAttribution: item.imageAttribution || results[0]?.creator || '',
+          imageLicense: item.imageLicense || results[0]?.license || '',
+        } : item))
+      } catch {
+        updateInvoiceLine(line.id, { imageLoading: false })
+      }
     }
   }
 
@@ -622,19 +655,62 @@ function ProductModal({ product, userId, onClose, onSave }: {
     setScanBusy(true)
     setScanError('')
     setScanProgress(0)
-    setScanStage('Datei wird vorbereitet')
+    setScanStage('Beleg wird vorbereitet')
+    setInvoiceLines([])
     try {
       const extracted = await readInvoiceFile(file, (progress, stage) => {
         setScanProgress(Math.round(progress * 100))
         setScanStage(stage)
       })
       setOcrText(extracted.text)
-      if (extracted.name) setName(extracted.name)
-      if (extracted.amount !== null) setPurchasePrice(extracted.amount.toFixed(2))
       if (extracted.date) setPurchaseDate(extracted.date)
-      setQuantity(String(extracted.quantity || 1))
-      if (extracted.name) await loadImages(extracted.name)
-      else setImageError('Der Produktname war auf dem Beleg nicht eindeutig. Bitte trage ihn ein und suche dann ein Bild.')
+      if (extracted.lineItems.length > 1) {
+        const initialLines: InvoiceDraftLine[] = extracted.lineItems.map(line => ({
+          ...line,
+          selected: true,
+          imageUrl: '',
+          imageAttribution: '',
+          imageLicense: '',
+          imageOptions: [],
+          imageLoading: true,
+          showImageOptions: false,
+        }))
+        setInvoiceLines(initialLines)
+        setName(extracted.name || initialLines[0].description)
+        setQuantity(String(extracted.quantity || 1))
+        setPurchasePrice(String(extracted.amount ?? initialLines.reduce((sum, line) => sum + line.amount, 0)))
+        const withImages = await Promise.all(initialLines.map(async line => {
+          try {
+            const results = await searchProductImages(line.description)
+            return {
+              ...line,
+              imageOptions: results,
+              imageUrl: results[0]?.url || '',
+              imageAttribution: results[0]?.creator || '',
+              imageLicense: results[0]?.license || '',
+              imageLoading: false,
+            }
+          } catch {
+            return { ...line, imageLoading: false }
+          }
+        }))
+        setInvoiceLines(withImages)
+      } else {
+        const firstLine = extracted.lineItems[0]
+        const productName = firstLine?.description || extracted.name
+        setInvoiceLines([])
+        if (productName) setName(productName)
+        if (firstLine) {
+          setPurchasePrice(firstLine.amount.toFixed(2))
+          setQuantity(String(firstLine.quantity || 1))
+        } else if (extracted.amount !== null) {
+          setPurchasePrice(extracted.amount.toFixed(2))
+          setQuantity(String(extracted.quantity || 1))
+        }
+        if (productName) await loadImages(productName)
+        else setImageError('Der Produktname war auf dem Beleg nicht eindeutig. Bitte trage ihn selbst ein.')
+      }
+      setScanStage('Automatische Auswertung abgeschlossen')
     } catch (error) {
       setScanError(error instanceof Error ? error.message : 'Der Beleg konnte nicht gelesen werden.')
     } finally {
@@ -644,26 +720,47 @@ function ProductModal({ product, userId, onClose, onSave }: {
 
   function submit(e: React.FormEvent) {
     e.preventDefault()
-    if (!name.trim() || purchasePrice === '' || Number(quantity) < 1) return
+    if (invoiceLines.length > 1) {
+      if (!selectedLines.length || selectedLines.some(line => !line.description.trim() || Number(line.quantity) < 1 || Number(line.amount) < 0)) return
+    } else if (!name.trim() || purchasePrice === '' || Number(quantity) < 1) {
+      return
+    }
+
     setSaving(true)
-    void onSave({
-      id: product?.id || crypto.randomUUID(),
-      name: name.trim(),
+    const common = {
       category,
       platform,
-      purchasePrice: Number(purchasePrice),
       salePrice: Number(salePrice || 0),
       shipping: Number(shipping || 0),
       fees: Number(fees || 0),
       purchaseDate,
       saleDate,
       status,
-      quantity: Math.max(1, Math.floor(Number(quantity) || 1)),
-      imageUrl,
-      imageAttribution,
-      imageLicense,
       receiptPath,
-    }, invoiceFile).then(saved => {
+    }
+    const products: Product[] = invoiceLines.length > 1
+      ? selectedLines.map(line => ({
+          id: crypto.randomUUID(),
+          name: line.description.trim(),
+          ...common,
+          purchasePrice: Number(line.amount || 0),
+          quantity: Math.max(1, Math.floor(Number(line.quantity) || 1)),
+          imageUrl: line.imageUrl,
+          imageAttribution: line.imageAttribution,
+          imageLicense: line.imageLicense,
+        }))
+      : [{
+          id: product?.id || crypto.randomUUID(),
+          name: name.trim(),
+          ...common,
+          purchasePrice: Number(purchasePrice),
+          quantity: Math.max(1, Math.floor(Number(quantity) || 1)),
+          imageUrl,
+          imageAttribution,
+          imageLicense,
+        }]
+
+    void onSave(products, invoiceFile).then(saved => {
       if (saved) onClose()
     }).finally(() => setSaving(false))
   }
@@ -681,22 +778,45 @@ function ProductModal({ product, userId, onClose, onSave }: {
         <button type="button" className="invoice-manual" onClick={() => setShowForm(true)}>Ohne Beleg manuell starten</button>
       </div>}
       {!selection && <div className="invoice-toolbar"><div className="invoice-file-status">{invoiceFile ? <><FileText size={16}/><span>{invoiceFile.name}</span></> : receiptPath ? <><FileText size={16}/><span>Beleg bereits gespeichert</span>{receiptUrl && <a href={receiptUrl} target="_blank" rel="noreferrer">Ansehen</a>}</> : <><FileText size={16}/><span>Kein Beleg angehängt</span></>}</div><div className="invoice-toolbar-actions"><button type="button" onClick={() => cameraInput.current?.click()}><Camera size={14}/> Scannen</button><button type="button" onClick={() => fileInput.current?.click()}><FileUp size={14}/> Datei</button></div></div>}
-      {scanBusy && <div className="scan-progress"><div className="scan-progress-top"><span><RefreshCw size={14} className="spin"/> {scanStage}</span><strong>{scanProgress}%</strong></div><div className="progress-track"><i style={{width: scanProgress + '%'}}/></div><small>Die Texterkennung läuft direkt in deinem Browser. Der Beleg wird dafür nicht an einen OCR-Dienst gesendet.</small></div>}
+      {scanBusy && <div className="scan-progress"><div className="scan-progress-top"><span><RefreshCw size={14} className="spin"/> {scanStage}</span><strong>{scanProgress}%</strong></div><div className="progress-track"><i style={{width: scanProgress + '%'}}/></div><small>Die lokale KI analysiert Belegtext und Tabellenpositionen. Das Modell wird einmalig geladen (mehrere hundert MB) und danach im Browser zwischengespeichert. Deine Rechnung wird nicht an einen KI-Dienst hochgeladen.</small></div>}
       {scanError && <div className="inline-error">{scanError}</div>}
     </div>
     {showForm && <form onSubmit={submit}><div className="form-grid">
-      <label className="field full"><span>Produktname *</span><input autoFocus required value={name} onChange={e=>setName(e.target.value)} onBlur={() => { if (name.trim() && !imageResults.length && !imageBusy) void loadImages(name) }} placeholder="z. B. Pokémon ETB – Hidden Fates"/></label>
-      <label className="field"><span>Stückzahl *</span><input required type="number" min="1" step="1" value={quantity} onChange={e=>setQuantity(e.target.value)}/></label>
+      {invoiceLines.length > 1 ? <div className="invoice-lines-panel full">
+        <div className="invoice-lines-heading"><div><strong>{invoiceLines.length} erkannte Artikel</strong><small>Alle passenden Positionen sind vorausgewählt. Prüfe Namen, Stückzahl und Gesamtpreis je Position.</small></div><span>{selectedLines.length} ausgewählt</span></div>
+        {invoiceLines.map(line => <div className="invoice-line-card" key={line.id}>
+          <div className="invoice-line-top"><input type="checkbox" checked={line.selected} onChange={e => updateInvoiceLine(line.id,{selected:e.target.checked})}/><input className="invoice-line-name" value={line.description} onChange={e => updateInvoiceLine(line.id,{description:e.target.value})} aria-label="Artikelname"/></div>
+          <div className="invoice-line-bottom">
+            <label><span>Stück</span><input type="number" min="1" step="1" value={line.quantity} onChange={e => updateInvoiceLine(line.id,{quantity:Number(e.target.value)})}/></label>
+            <label><span>Gesamtpreis (€)</span><input type="number" min="0" step="0.01" value={line.amount} onChange={e => updateInvoiceLine(line.id,{amount:Number(e.target.value)})}/></label>
+            <div className="invoice-line-image">
+              {line.imageUrl ? <img src={line.imageUrl} alt={line.description}/> : <span className="invoice-line-no-image"><ImagePlus size={16}/></span>}
+              <div><small>{line.imageAttribution ? 'Bild: ' + line.imageAttribution : line.imageLoading ? 'Bild wird gesucht …' : 'Kein Bild gefunden'}</small><button type="button" onClick={() => void toggleLineImageOptions(line)}>{line.showImageOptions ? 'Auswahl schließen' : 'Bild ändern'}</button></div>
+            </div>
+          </div>
+          {line.showImageOptions && <div className="invoice-line-options">
+            {line.imageLoading ? <small>Bildsuche läuft …</small> : line.imageOptions.map(option => <button type="button" key={option.id} className={line.imageUrl === option.url ? 'image-choice-thumb chosen' : 'image-choice-thumb'} onClick={() => updateInvoiceLine(line.id,{imageUrl:option.url,imageAttribution:option.creator,imageLicense:option.license,showImageOptions:false})}><img src={option.thumbnail} alt={option.title}/></button>)}
+            <a href={googleImagesUrl(line.description)} target="_blank" rel="noreferrer">Google Bilder öffnen <ExternalLink size={12}/></a>
+          </div>}
+        </div>)}
+        <div className="invoice-lines-total"><span>Ausgewählte Artikel · {selectedLineQuantity} Stück</span><strong>{money(selectedLineTotal)}</strong></div>
+      </div> : <>
+        <label className="field full"><span>Produktname *</span><input autoFocus required value={name} onChange={e=>setName(e.target.value)} onBlur={() => { if (name.trim() && !imageUrl && !imageBusy) void loadImages(name) }} placeholder="z. B. Pokémon ETB – Hidden Fates"/></label>
+        <label className="field"><span>Stückzahl *</span><input required type="number" min="1" step="1" value={quantity} onChange={e=>setQuantity(e.target.value)}/></label>
+        <label className="field"><span>Einkaufspreis gesamt (€) *</span><input required type="number" min="0" step="0.01" value={purchasePrice} onChange={e=>setPurchasePrice(e.target.value)} placeholder="0,00"/></label>
+        <div className="form-section full"><span>PRODUKTBILD</span></div>
+        <div className="image-picker full">
+          {imageUrl ? <div className="selected-image"><img src={imageUrl} alt="Automatisch gewähltes Produktbild"/><div><strong>Automatisches Produktbild</strong><small>{imageAttribution ? 'Bildnachweis: ' + imageAttribution : 'Bild automatisch gewählt'}{imageLicense ? ' · ' + imageLicense : ''}</small><button type="button" onClick={() => {setImageUrl('');setImageAttribution('');setImageLicense('')}}>Entfernen</button></div></div> : <div className="image-empty"><ImagePlus size={18}/><span>{imageError || 'Das Produktbild wird automatisch gesucht.'}</span></div>}
+          <div className="image-search-row">
+            <button type="button" className="button-secondary" disabled={!name.trim() || imageBusy} onClick={() => {setImageOptionsVisible(v => !v); if (!imageResults.length) void loadImages(name,true)}}>{imageBusy ? <RefreshCw size={14} className="spin"/> : <Search size={14}/>} {imageOptionsVisible ? 'Auswahl schließen' : 'Bild ändern'}</button>
+            {name.trim() && <a href={googleImagesUrl(name)} target="_blank" rel="noreferrer">Google Bilder öffnen <ExternalLink size={12}/></a>}
+          </div>
+          {imageOptionsVisible && <div className="image-suggestions">{imageResults.map(item => <button type="button" key={item.id} className={imageUrl === item.url ? 'image-choice-thumb chosen' : 'image-choice-thumb'} onClick={() => {setImageUrl(item.url);setImageAttribution(item.creator);setImageLicense(item.license);setImageOptionsVisible(false)}}><img src={item.thumbnail} alt={item.title}/><span>{item.creator || item.title}</span></button>)}</div>}
+        </div>
+      </>}
       <label className="field"><span>Kategorie</span><input value={category} onChange={e=>setCategory(e.target.value)} placeholder="z. B. Trading Cards"/></label>
-      <label className="field"><span>Einkaufspreis gesamt (€) *</span><input required type="number" min="0" step="0.01" value={purchasePrice} onChange={e=>setPurchasePrice(e.target.value)} placeholder="0,00"/></label>
       <label className="field"><span>Einkaufsdatum</span><input type="date" value={purchaseDate} onChange={e=>setPurchaseDate(e.target.value)}/></label>
       <label className="field"><span>Plattform</span><select value={platform} onChange={e=>setPlatform(e.target.value)}><option value="">Bitte wählen</option><option>eBay</option><option>Kleinanzeigen</option><option>Vinted</option><option>Cardmarket</option><option>Facebook Marketplace</option><option>Sonstige</option></select></label>
-      <div className="form-section full"><span>PRODUKTBILD</span></div>
-      <div className="image-picker full">
-        {imageUrl ? <div className="selected-image"><img src={imageUrl} alt="Vorgeschlagenes Produktbild"/><div><strong>Produktbild ausgewählt</strong><small>{imageAttribution ? 'Bildnachweis: ' + imageAttribution : 'Bildvorschlag' }{imageLicense ? ' · ' + imageLicense : ''}</small><button type="button" onClick={() => {setImageUrl('');setImageAttribution('');setImageLicense('')}}>Entfernen</button></div></div> : <div className="image-empty"><ImagePlus size={18}/><span>Nach dem Einlesen wird automatisch nach einem passenden Bild gesucht.</span></div>}
-        <div className="image-search-row"><button type="button" className="button-secondary" disabled={!name.trim() || imageBusy} onClick={() => void loadImages(name, false)}>{imageBusy ? <RefreshCw size={14} className="spin"/> : <Search size={14}/>} {imageBusy ? 'Suche läuft …' : 'Bild suchen'}</button>{imageError && <small>{imageError}</small>}</div>
-        {imageResults.length > 0 && <div className="image-suggestions">{imageResults.map(item => <button type="button" key={item.id} className={imageUrl === item.url ? 'image-choice-thumb chosen' : 'image-choice-thumb'} onClick={() => {setImageUrl(item.url);setImageAttribution(item.creator);setImageLicense(item.license)}}><img src={item.thumbnail} alt={item.title}/><span>{item.creator || item.title}</span></button>)}</div>}
-      </div>
       <div className="form-section full"><span>VERKAUF & KOSTEN</span></div>
       <label className="field"><span>Verkaufspreis gesamt (€)</span><input type="number" min="0" step="0.01" value={salePrice} onChange={e=>setSalePrice(e.target.value)} placeholder="0,00"/></label>
       <label className="field"><span>Versandkosten (€)</span><input type="number" min="0" step="0.01" value={shipping} onChange={e=>setShipping(e.target.value)}/></label>
@@ -704,10 +824,12 @@ function ProductModal({ product, userId, onClose, onSave }: {
       <label className="field"><span>Verkaufsdatum</span><input type="date" value={saleDate} onChange={e=>setSaleDate(e.target.value)}/></label>
       <label className="field"><span>Status</span><select value={status} onChange={e=>setStatus(e.target.value as Status)}><option>Auf Lager</option><option>Verkauft</option></select></label>
       {ocrText && <details className="ocr-details full"><summary>Erkannten Rechnungstext anzeigen</summary><pre>{ocrText.slice(0, 8000)}</pre></details>}
-      <div className="profit-preview full"><div><span>Voraussichtlicher Gewinn</span><small>Verkauf gesamt − Einkauf gesamt − Versand − Gebühren</small></div><strong className={estimated >= 0 ? 'positive' : 'negative'}>{money(estimated)}</strong></div>
-    </div><div className="modal-actions"><button type="button" className="button-ghost" onClick={onClose} disabled={saving}>Abbrechen</button><button type="submit" className="button-primary" disabled={saving || scanBusy}>{saving ? <LoaderCircle size={15} className="spin"/> : null}{saving ? 'Speichert …' : product ? 'Änderungen speichern' : 'Produkt speichern'}</button></div></form>}
+      {invoiceLines.length <= 1 && <div className="profit-preview full"><div><span>Voraussichtlicher Gewinn</span><small>Verkauf gesamt − Einkauf gesamt − Versand − Gebühren</small></div><strong className={estimated >= 0 ? 'positive' : 'negative'}>{money(estimated)}</strong></div>}
+    </div><div className="modal-actions"><button type="button" className="button-ghost" onClick={onClose} disabled={saving}>Abbrechen</button><button type="submit" className="button-primary" disabled={saving || scanBusy || (invoiceLines.length > 1 && selectedLines.length === 0)}>{saving ? <LoaderCircle size={15} className="spin"/> : null}{saving ? 'Speichert …' : product ? 'Änderungen speichern' : invoiceLines.length > 1 ? selectedLines.length + ' Produkte hinzufügen' : 'Produkt speichern'}</button></div></form>}
   </div></div>
 }
+
+
 
 function HelpModal({ onClose }: { onClose: () => void }) {
   return <div className="modal-backdrop help-backdrop" onMouseDown={e => { if (e.target === e.currentTarget) onClose() }}><section className="modal-card help-card">

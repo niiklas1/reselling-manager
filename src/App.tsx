@@ -390,6 +390,7 @@ function App() {
   const [mobileNav, setMobileNav] = useState(false)
   const [showHelp, setShowHelp] = useState(false)
   const [backupBusy, setBackupBusy] = useState(false)
+  const [pendingBackupFile, setPendingBackupFile] = useState<File | null>(null)
   const [currency, setCurrency] = useState(() => localStorage.getItem('reselling-currency') || 'EUR')
   const [receiptProduct, setReceiptProduct] = useState<Product | null>(null)
   const [backupMessage, setBackupMessage] = useState('')
@@ -471,35 +472,45 @@ function App() {
       entries.unshift({ name: 'backup.json', bytes: new TextEncoder().encode(JSON.stringify(manifest)) })
       const archive = makeZip(entries)
       const backupFile = await createBackupPdf(archive, products, receipts.length)
-      let shared = false
-      if (navigator.share && typeof navigator.canShare === 'function' && navigator.canShare({ files: [backupFile] })) {
-        try {
-          await navigator.share({ files: [backupFile], title: 'Reselling Manager Backup' })
-          shared = true
-        } catch (shareError) {
-          if (shareError instanceof DOMException && shareError.name === 'AbortError') throw shareError
-          // Fall back to the browser download when the device rejects file sharing.
-        }
-      }
-      if (!shared) {
-        const url = URL.createObjectURL(backupFile)
-        const link = document.createElement('a')
-        link.href = url
-        link.download = backupFile.name
-        document.body.appendChild(link)
-        link.click()
-        link.remove()
-        window.setTimeout(() => URL.revokeObjectURL(url), 60000)
-        setBackupMessage('PDF-Backup erstellt. Auf dem iPhone bei Bedarf die PDF-Vorschau über Teilen > In Dateien sichern ablegen.')
-      } else {
-        setBackupMessage('PDF-Backup vorbereitet. Im iOS-Teilen-Menü jetzt „In Dateien sichern“ auswählen.')
-      }
+      setPendingBackupFile(backupFile)
+      setBackupMessage('PDF-Backup fertig. Tippe jetzt auf „PDF in Dateien sichern“, um das iOS-Teilen-Menü zu öffnen.')
     } catch (error) {
       if (error instanceof DOMException && error.name === 'AbortError') setBackupMessage('Speichern wurde abgebrochen. Es wurde keine Datei als gesichert bestätigt.')
       else setBackupMessage(error instanceof Error ? error.message : 'PDF-Backup konnte nicht erstellt werden.')
     } finally {
       setBackupBusy(false)
     }
+  }
+
+  async function shareBackupFile() {
+    const file = pendingBackupFile
+    if (!file) return
+    if (!navigator.share || typeof navigator.canShare !== 'function' || !navigator.canShare({ files: [file] })) {
+      setBackupMessage('Teilen von Dateien wird in diesem Browser nicht unterstützt. Nutze „PDF herunterladen“ und anschließend das Teilen-Menü der PDF in Safari.')
+      return
+    }
+    try {
+      // navigator.share must be invoked immediately in the tap handler, before any await.
+      const shareResult = navigator.share({ files: [file], title: 'Reselling Manager Backup' })
+      await shareResult
+      setBackupMessage('Teilen-Menü geschlossen. Wähle dort „In Dateien sichern“, wenn du die PDF ablegen möchtest.')
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') setBackupMessage('Teilen abgebrochen. Die fertige PDF bleibt hier bereit.')
+      else setBackupMessage('Das Teilen-Menü konnte nicht geöffnet werden. Nutze alternativ „PDF herunterladen“.')
+    }
+  }
+
+  function downloadBackupFile() {
+    if (!pendingBackupFile) return
+    const url = URL.createObjectURL(pendingBackupFile)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = pendingBackupFile.name
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+    window.setTimeout(() => URL.revokeObjectURL(url), 60000)
+    setBackupMessage('PDF-Download wurde gestartet. Auf dem iPhone kannst du die Datei anschließend in Safari über Teilen > In Dateien sichern ablegen.')
   }
 
   async function restoreBackup(file?: File) {
@@ -766,7 +777,7 @@ function App() {
           )}
 
           {section === 'Auswertungen' && <section className="panel coming-panel"><div className="coming-icon"><Sparkles size={23}/></div><h2>Auswertungen</h2><p>Hier bauen wir deine Monatsübersichten, Gewinnentwicklung und Plattformvergleiche auf.</p><span className="coming-tag">WIRD ALS NÄCHSTES ERWEITERT</span></section>}
-          {section === 'Einstellungen' && <section className="panel settings-panel"><div className="panel-title-row"><div><h2>Lokaler Workspace</h2><p>Die App läuft ohne Konto, Anmeldung oder E-Mail-Versand.</p></div></div><div className="setting-row"><div><strong>Betriebsmodus</strong><span>Persönliche Nutzung auf diesem Gerät.</span></div><span className="setting-pill">Ohne Login</span></div><div className="setting-row"><div><strong>Erscheinungsbild</strong><span>Zwischen dem dunklen Neon-Look und dem hellen Design wechseln.</span></div><button className="setting-toggle" onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}>{theme === 'dark' ? <Sun size={15}/> : <Moon size={15}/>} {theme === 'dark' ? 'Helles Design' : 'Dark Mode'}</button></div><div className="setting-row"><div><strong>Datenspeicherung</strong><span>Produkte werden nur in diesem Browser gespeichert. Es gibt keine Cloud-Synchronisierung.</span></div><span className="setting-pill">Lokal</span></div><div className="setting-row"><div><strong>Belege</strong><span>PDFs und Bilder werden im lokalen Browserspeicher dieses Geräts abgelegt.</span></div><span className="setting-pill">Auf diesem Gerät</span></div><div className="backup-section"><div className="backup-heading"><div><strong>Vollständiges PDF-Backup</strong><span>Sichere Produkte, Website-Einstellungen und sämtliche gespeicherten Originalbelege in einer einzigen PDF-Datei. Die Wiederherstellungsdaten sind in der PDF eingebettet.</span></div><HardDrive size={20}/></div><div className="backup-actions"><button className="button-primary" onClick={() => void createBackup()} disabled={backupBusy}><ArrowDownToLine size={15}/>{backupBusy ? 'PDF wird erstellt …' : 'PDF-Backup erstellen'}</button><button className="button-secondary" onClick={() => backupInput.current?.click()} disabled={backupBusy}><FileUp size={15}/> PDF / Backup importieren</button><input ref={backupInput} type="file" accept=".pdf,application/pdf,.zip,application/zip,.json,application/json,application/octet-stream" hidden onChange={e => void restoreBackup(e.target.files?.[0])}/></div>{backupMessage && <p className="backup-message" role="status">{backupMessage}</p>}<small>Auf dem iPhone im Teilen-Menü „In Dateien sichern“ wählen. Beim Wiederherstellen die unveränderte PDF auswählen. Ältere ZIP- und JSON-Backups bleiben ebenfalls importierbar.</small></div><div className="setting-row"><div><strong>Währung</strong><span>Wähle die Währung, in der Beträge angezeigt werden. Zahlenwerte werden dabei nicht umgerechnet.</span></div><select className="currency-select" value={currency} onChange={e => setCurrency(e.target.value)} aria-label="Anzeigewährung"><option value="EUR">Euro (€)</option><option value="USD">US-Dollar ($)</option><option value="GBP">Britisches Pfund (£)</option><option value="CHF">Schweizer Franken (CHF)</option></select></div><div className="setting-row"><div><strong>App-Version</strong><span>Reselling Manager – Invoice Studio</span></div><span className="setting-pill">0.3.0 Local</span></div></section>}
+          {section === 'Einstellungen' && <section className="panel settings-panel"><div className="panel-title-row"><div><h2>Lokaler Workspace</h2><p>Die App läuft ohne Konto, Anmeldung oder E-Mail-Versand.</p></div></div><div className="setting-row"><div><strong>Betriebsmodus</strong><span>Persönliche Nutzung auf diesem Gerät.</span></div><span className="setting-pill">Ohne Login</span></div><div className="setting-row"><div><strong>Erscheinungsbild</strong><span>Zwischen dem dunklen Neon-Look und dem hellen Design wechseln.</span></div><button className="setting-toggle" onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}>{theme === 'dark' ? <Sun size={15}/> : <Moon size={15}/>} {theme === 'dark' ? 'Helles Design' : 'Dark Mode'}</button></div><div className="setting-row"><div><strong>Datenspeicherung</strong><span>Produkte werden nur in diesem Browser gespeichert. Es gibt keine Cloud-Synchronisierung.</span></div><span className="setting-pill">Lokal</span></div><div className="setting-row"><div><strong>Belege</strong><span>PDFs und Bilder werden im lokalen Browserspeicher dieses Geräts abgelegt.</span></div><span className="setting-pill">Auf diesem Gerät</span></div><div className="backup-section"><div className="backup-heading"><div><strong>Vollständiges PDF-Backup</strong><span>Sichere Produkte, Website-Einstellungen und sämtliche gespeicherten Originalbelege in einer einzigen PDF-Datei. Die Wiederherstellungsdaten sind in der PDF eingebettet.</span></div><HardDrive size={20}/></div><div className="backup-actions"><button className="button-primary" onClick={() => void createBackup()} disabled={backupBusy}><ArrowDownToLine size={15}/>{backupBusy ? 'PDF wird erstellt …' : 'PDF-Backup erstellen'}</button><button className="button-secondary" onClick={() => backupInput.current?.click()} disabled={backupBusy}><FileUp size={15}/> PDF / Backup importieren</button><input ref={backupInput} type="file" accept=".pdf,application/pdf,.zip,application/zip,.json,application/json,application/octet-stream" hidden onChange={e => void restoreBackup(e.target.files?.[0])}/></div>{pendingBackupFile && <div className="backup-actions"><button className="button-primary" onClick={() => void shareBackupFile()}><ArrowUpRight size={15}/> PDF in Dateien sichern / teilen</button><button className="button-secondary" onClick={downloadBackupFile}><ArrowDownToLine size={15}/> PDF herunterladen</button></div>}{backupMessage && <p className="backup-message" role="status">{backupMessage}</p>}<small>Auf dem iPhone im Teilen-Menü „In Dateien sichern“ wählen. Beim Wiederherstellen die unveränderte PDF auswählen. Ältere ZIP- und JSON-Backups bleiben ebenfalls importierbar.</small></div><div className="setting-row"><div><strong>Währung</strong><span>Wähle die Währung, in der Beträge angezeigt werden. Zahlenwerte werden dabei nicht umgerechnet.</span></div><select className="currency-select" value={currency} onChange={e => setCurrency(e.target.value)} aria-label="Anzeigewährung"><option value="EUR">Euro (€)</option><option value="USD">US-Dollar ($)</option><option value="GBP">Britisches Pfund (£)</option><option value="CHF">Schweizer Franken (CHF)</option></select></div><div className="setting-row"><div><strong>App-Version</strong><span>Reselling Manager – Invoice Studio</span></div><span className="setting-pill">0.3.0 Local</span></div></section>}
           <footer className="page-footer">Reselling Manager <span>·</span> Einfach den Überblick behalten.</footer>
         </div>
       </main>

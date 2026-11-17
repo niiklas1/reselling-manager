@@ -364,3 +364,9 @@ body{background:#f1eff8}
 :root[data-theme="dark"] .invoice-confidence.good{background:#183a34;color:#7ed5b2}
 :root[data-theme="dark"] .invoice-confidence.review{background:#403322;color:#efc18b}
 @media(max-width:600px){.invoice-line-top{grid-template-columns:18px minmax(0,1fr)}.invoice-confidence{grid-column:2;justify-self:start;margin-top:2px}}
+
+
+/* Keep the independent inventory filters aligned and responsive. */
+.filter-controls{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.filter-controls .filter-control select{min-width:112px}
+@media(max-width:720px){.filter-controls{align-self:flex-start}}

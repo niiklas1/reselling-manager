@@ -51,7 +51,9 @@ function progress(id: number, fraction: number, stage: string): void {
   send({ type: 'progress', id, fraction: Math.max(0, Math.min(1, fraction)), stage });
 }
 
-async function chooseBackend(): Promise<{ device: 'webgpu' | 'wasm'; dtype: Record<string, string> }> {
+type FlorenceDtype = 'auto' | 'fp16' | 'q4' | 'fp32' | 'q8' | 'int8' | 'uint8' | 'bnb4' | 'q4f16' | 'q2' | 'q2f16' | 'q1' | 'q1f16'
+
+async function chooseBackend(): Promise<{ device: 'webgpu' | 'wasm'; dtype: Record<string, FlorenceDtype> }> {
   const gpu = self.navigator.gpu;
   if (gpu) {
     try {

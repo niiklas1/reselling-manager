@@ -77,9 +77,10 @@ export async function readInvoiceSource(file: File, onProgress: Progress): Promi
 
   const candidates: Array<{ result: InvoiceExtraction; score: number; label: string }> = []
   const attachments = email.attachments || []
-  const usable = attachments
-    .map((attachment, index) => ({ attachment, file: attachmentFile(attachment, index) }))
-    .filter((entry): entry is { attachment: typeof entry.attachment; file: File } => Boolean(entry.file))
+  const usable = attachments.flatMap((attachment, index) => {
+    const invoiceFile = attachmentFile(attachment, index)
+    return invoiceFile ? [{ attachment, file: invoiceFile }] : []
+  })
 
   for (let index = 0; index < usable.length; index++) {
     const entry = usable[index]

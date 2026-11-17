@@ -28,7 +28,29 @@ test('does not match a payment terminal row to a product title', () => {
 })
 
 
-test('replaces noisy Ditto OCR with the exact barcode catalogue title', async () => {
+test('resolves the known Ditto EAN locally without using an external API', async () => {
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = async () => { throw new Error('No external request expected for a curated EAN') }
+  try {
+    const result = await enrichInvoiceProductNames([{
+      id: 'line-1',
+      description: 'PKM 30 Jahre Ditto Premi',
+      quantity: 1,
+      unitPrice: 46.99,
+      amount: 46.99,
+      confidence: 0.69,
+      barcode: '196214147454',
+    }])
+    assert.equal(result[0].description, 'Pokémon 30 Jahre Ditto Premium-Kollektion DE')
+    assert.equal(result[0].productVerified, true)
+    assert.equal(result[0].productVerification, 'barcode')
+    assert.equal(result[0].confidence, 0.99)
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
+test('uses the free UPC catalog for other exact barcode matches', async () => {
   const originalFetch = globalThis.fetch
   const originalStorage = globalThis.localStorage
   const values = new Map()
@@ -40,32 +62,24 @@ test('replaces noisy Ditto OCR with the exact barcode catalogue title', async ()
     },
   })
   globalThis.fetch = async input => {
-    assert.match(String(input), /\/api\/product\/lookup\?barcodes=196214147454/)
+    assert.match(String(input), /\/api\/product\/lookup\?barcodes=4006381333931/)
     return new Response(JSON.stringify({
       code: 'OK',
-      items: [{
-        upc: '196214147454',
-        ean: '0196214147454',
-        title: '30 Jahre Ditto Premium-Kollektion DE',
-        brand: 'Pokémon',
-      }],
+      items: [{ ean: '4006381333931', title: 'Catalog Test Product', brand: 'Test' }],
     }), { status: 200, headers: { 'Content-Type': 'application/json' } })
   }
-
   try {
     const result = await enrichInvoiceProductNames([{
-      id: 'line-1',
-      description: 'PKM 30 Jahre Ditto Premi',
+      id: 'line-2',
+      description: 'Catalog Test',
       quantity: 1,
-      unitPrice: 46.99,
-      amount: 46.99,
+      unitPrice: 1,
+      amount: 1,
       confidence: 0.69,
-      barcode: '196214147454',
+      barcode: '4006381333931',
     }])
-    assert.equal(result[0].description, '30 Jahre Ditto Premium-Kollektion DE')
-    assert.equal(result[0].productVerified, true)
+    assert.equal(result[0].description, 'Catalog Test Product')
     assert.equal(result[0].productVerification, 'barcode')
-    assert.equal(result[0].confidence, 0.99)
   } finally {
     globalThis.fetch = originalFetch
     if (originalStorage === undefined) delete globalThis.localStorage

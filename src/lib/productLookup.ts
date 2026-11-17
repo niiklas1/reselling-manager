@@ -17,15 +17,26 @@ const RATE_KEY = 'reselling-upcitemdb-rate-v1'
 const MIN_API_INTERVAL = 10_000
 const DAILY_SOFT_LIMIT = 90
 
-async function reserveFreeApiRequest(): Promise<boolean> {
+async function reserveFreeApiRequest(isSearch: boolean): Promise<boolean> {
   try {
     const today = new Date().toISOString().slice(0, 10)
-    const usage = JSON.parse(localStorage.getItem(RATE_KEY) || '{}') as { day?: string; count?: number; lastAt?: number }
+    const usage = JSON.parse(localStorage.getItem(RATE_KEY) || '{}') as {
+      day?: string
+      count?: number
+      searchCount?: number
+      lastAt?: number
+    }
     const count = usage.day === today ? Number(usage.count || 0) : 0
-    if (count >= DAILY_SOFT_LIMIT) return false
+    const searchCount = usage.day === today ? Number(usage.searchCount || 0) : 0
+    if (count >= DAILY_SOFT_LIMIT || (isSearch && searchCount >= 18)) return false
     const wait = Math.max(0, Number(usage.lastAt || 0) + MIN_API_INTERVAL - Date.now())
     if (wait) await new Promise(resolve => setTimeout(resolve, wait))
-    localStorage.setItem(RATE_KEY, JSON.stringify({ day: today, count: count + 1, lastAt: Date.now() }))
+    localStorage.setItem(RATE_KEY, JSON.stringify({
+      day: today,
+      count: count + 1,
+      searchCount: searchCount + (isSearch ? 1 : 0),
+      lastAt: Date.now(),
+    }))
     return true
   } catch {
     // Storage can be unavailable in private browsing; still try one request.
@@ -110,7 +121,7 @@ export function productNameSimilarity(receiptName: string, catalogName: string):
 }
 
 async function requestCatalog(path: string): Promise<CatalogItem[]> {
-  if (!await reserveFreeApiRequest()) throw new Error('Free product catalog request budget reached')
+  if (!await reserveFreeApiRequest(path.includes('/search?'))) throw new Error('Free product catalog request budget reached')
   const response = await fetch(path, { headers: { Accept: 'application/json' } })
   if (response.status === 404) return []
   if (!response.ok) throw new Error('Product catalog request failed: ' + response.status)
@@ -142,7 +153,7 @@ async function lookupBarcodes(barcodes: string[]): Promise<Map<string, CatalogIt
         const matches = items.filter(item =>
           [item.ean, item.upc, item.gtin].some(value => value && equivalentBarcode(code, value))
         )
-        writeCache('ean:' + code, matches)
+        writeCache('ean:' + code, matches, matches.length ? CACHE_TTL : SEARCH_TTL)
         if (matches[0]) found.set(code, matches[0])
       }
     } catch {

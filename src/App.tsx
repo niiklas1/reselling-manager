@@ -44,7 +44,8 @@ const PRODUCTS_STORAGE_KEY = 'reselling-products'
 const RECEIPTS_DB_NAME = 'reselling-manager-local'
 const RECEIPTS_STORE = 'receipts'
 
-const money = (value: number) => new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'EUR' }).format(value)
+let activeCurrency = 'EUR'
+const money = (value: number) => new Intl.NumberFormat('de-DE', { style: 'currency', currency: activeCurrency }).format(value)
 const profit = (p: Product) => p.salePrice - p.purchasePrice - p.shipping - p.fees
 
 function readStoredProducts(): Product[] {
@@ -122,7 +123,70 @@ async function deleteLocalReceipt(path: string): Promise<void> {
 
 
 type BackupReceipt = { name: string; type: string; data: string }
-type ResellingBackup = { format: 'reselling-manager-backup'; version: 1; createdAt: string; products: Product[]; receipts: Record<string, BackupReceipt> }
+type ResellingBackupV1 = { format: 'reselling-manager-backup'; version: 1; createdAt: string; products: Product[]; receipts: Record<string, BackupReceipt> }
+type ResellingBackupV2 = { format: 'reselling-manager-backup'; version: 2; createdAt: string; products: Product[] }
+type ZipEntry = { name: string; bytes: Uint8Array }
+
+function crc32(bytes: Uint8Array): number {
+  let crc = 0xffffffff
+  for (const byte of bytes) {
+    crc ^= byte
+    for (let bit = 0; bit < 8; bit++) crc = (crc >>> 1) ^ (crc & 1 ? 0xedb88320 : 0)
+  }
+  return (crc ^ 0xffffffff) >>> 0
+}
+
+function makeZip(entries: ZipEntry[]): Blob {
+  const encoder = new TextEncoder()
+  const localParts: Uint8Array[] = []
+  const centralParts: Uint8Array[] = []
+  let offset = 0
+  for (const entry of entries) {
+    const name = encoder.encode(entry.name)
+    const crc = crc32(entry.bytes)
+    const local = new Uint8Array(30 + name.length)
+    const lv = new DataView(local.buffer)
+    lv.setUint32(0, 0x04034b50, true); lv.setUint16(4, 20, true); lv.setUint16(6, 0x0800, true)
+    lv.setUint16(8, 0, true); lv.setUint32(14, crc, true); lv.setUint32(18, entry.bytes.length, true); lv.setUint32(22, entry.bytes.length, true); lv.setUint16(26, name.length, true)
+    local.set(name, 30); localParts.push(local, entry.bytes)
+    const central = new Uint8Array(46 + name.length)
+    const cv = new DataView(central.buffer)
+    cv.setUint32(0, 0x02014b50, true); cv.setUint16(4, 20, true); cv.setUint16(6, 20, true); cv.setUint16(8, 0x0800, true)
+    cv.setUint16(10, 0, true); cv.setUint32(16, crc, true); cv.setUint32(20, entry.bytes.length, true); cv.setUint32(24, entry.bytes.length, true)
+    cv.setUint16(28, name.length, true); cv.setUint32(42, offset, true); central.set(name, 46)
+    centralParts.push(central); offset += local.length + entry.bytes.length
+  }
+  const centralSize = centralParts.reduce((sum, part) => sum + part.length, 0)
+  const end = new Uint8Array(22); const ev = new DataView(end.buffer)
+  ev.setUint32(0, 0x06054b50, true); ev.setUint16(8, entries.length, true); ev.setUint16(10, entries.length, true)
+  ev.setUint32(12, centralSize, true); ev.setUint32(16, offset, true)
+  return new Blob([...localParts, ...centralParts, end], { type: 'application/zip' })
+}
+
+async function readZip(file: File): Promise<Record<string, Uint8Array>> {
+  const bytes = new Uint8Array(await file.arrayBuffer())
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
+  const decoder = new TextDecoder()
+  const files: Record<string, Uint8Array> = {}
+  let offset = 0
+  while (offset + 30 <= bytes.length && view.getUint32(offset, true) === 0x04034b50) {
+    const flags = view.getUint16(offset + 6, true)
+    const method = view.getUint16(offset + 8, true)
+    const size = view.getUint32(offset + 18, true)
+    const nameLength = view.getUint16(offset + 26, true)
+    const extraLength = view.getUint16(offset + 28, true)
+    if ((flags & 0x0008) !== 0 || method !== 0) throw new Error('Dieses ZIP-Backup verwendet ein nicht unterstütztes Kompressionsformat.')
+    const nameStart = offset + 30
+    const name = decoder.decode(bytes.slice(nameStart, nameStart + nameLength))
+    const dataStart = nameStart + nameLength + extraLength
+    const dataEnd = dataStart + size
+    if (dataEnd > bytes.length) throw new Error('Die Backup-Datei ist beschädigt oder unvollständig.')
+    files[name] = bytes.slice(dataStart, dataEnd)
+    offset = dataEnd
+  }
+  if (!files['backup.json']) throw new Error('In der ZIP-Datei wurde keine backup.json gefunden.')
+  return files
+}
 
 function blobToDataUrl(blob: Blob): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -154,12 +218,23 @@ function App() {
   const [mobileNav, setMobileNav] = useState(false)
   const [showHelp, setShowHelp] = useState(false)
   const [backupBusy, setBackupBusy] = useState(false)
+  const [currency, setCurrency] = useState(() => localStorage.getItem('reselling-currency') || 'EUR')
+  const [receiptProduct, setReceiptProduct] = useState<Product | null>(null)
+  const [receiptModalOpen, setReceiptModalOpen] = useState(false)
+  const [profileOpen, setProfileOpen] = useState(false)
   const [backupMessage, setBackupMessage] = useState('')
   const backupInput = useRef<HTMLInputElement>(null)
   const [theme, setTheme] = useState<'light' | 'dark'>(() => {
     const saved = localStorage.getItem('reselling-theme')
     return saved === 'light' ? 'light' : 'dark'
   })
+
+  activeCurrency = currency
+
+  useEffect(() => {
+    localStorage.setItem('reselling-currency', currency)
+    activeCurrency = currency
+  }, [currency])
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme
@@ -180,27 +255,39 @@ function App() {
     setBackupBusy(true)
     setBackupMessage('')
     try {
-      const receipts: Record<string, BackupReceipt> = {}
+      const entries: ZipEntry[] = []
+      const backupProducts = products.map(product => ({ ...product }))
       const receiptPaths = [...new Set(products.map(product => product.receiptPath).filter(path => path.startsWith('local:')))]
-      for (const path of receiptPaths) {
+      for (const [index, path] of receiptPaths.entries()) {
         const blob = await readLocalReceipt(path)
-        if (!blob) throw new Error('Ein gespeicherter Beleg fehlt. Das Backup wurde abgebrochen, damit es nicht unvollständig ist.')
-        const name = blob instanceof File ? blob.name : 'beleg'
-        receipts[path] = { name, type: blob.type || 'application/octet-stream', data: await blobToDataUrl(blob) }
+        if (!blob) throw new Error('Ein gespeicherter Beleg fehlt. Das Backup wurde nicht erstellt, damit es vollständig bleibt.')
+        const extension = blob.type === 'application/pdf' ? 'pdf' : blob.type.startsWith('image/') ? (blob.type.split('/')[1] || 'img').replace('jpeg', 'jpg') : 'bin'
+        const archivePath = 'receipts/' + (index + 1) + '.' + extension
+        const productMatches = backupProducts.filter(product => product.receiptPath === path)
+        productMatches.forEach(product => { product.receiptPath = 'backup:' + archivePath })
+        entries.push({ name: archivePath, bytes: new Uint8Array(await blob.arrayBuffer()) })
       }
-      const backup: ResellingBackup = { format: 'reselling-manager-backup', version: 1, createdAt: new Date().toISOString(), products, receipts }
-      const blob = new Blob([JSON.stringify(backup)], { type: 'application/json' })
-      const url = URL.createObjectURL(blob)
-      const link = document.createElement('a')
-      link.href = url
-      link.download = 'reselling-manager-backup-' + new Date().toISOString().slice(0, 10) + '.json'
-      document.body.appendChild(link)
-      link.click()
-      link.remove()
-      URL.revokeObjectURL(url)
-      setBackupMessage('Backup erstellt: ' + products.length + ' Produkte und ' + receiptPaths.length + ' Belege gesichert.')
+      const manifest: ResellingBackupV2 = { format: 'reselling-manager-backup', version: 2, createdAt: new Date().toISOString(), products: backupProducts }
+      entries.unshift({ name: 'backup.json', bytes: new TextEncoder().encode(JSON.stringify(manifest, null, 2)) })
+      const blob = makeZip(entries)
+      const fileName = 'reselling-manager-backup-' + new Date().toISOString().slice(0, 10) + '.zip'
+      const backupFile = new File([blob], fileName, { type: 'application/zip' })
+      if (navigator.share && navigator.canShare?.({ files: [backupFile] })) {
+        await navigator.share({ files: [backupFile], title: 'Reselling-Manager-Backup' })
+      } else {
+        const url = URL.createObjectURL(blob)
+        const link = document.createElement('a')
+        link.href = url
+        link.download = fileName
+        document.body.appendChild(link)
+        link.click()
+        link.remove()
+        window.setTimeout(() => URL.revokeObjectURL(url), 60000)
+      }
+      setBackupMessage('ZIP-Backup erstellt: ' + products.length + ' Produkte und ' + receiptPaths.length + ' Originalbelege. Auf iPhone/iPad kannst du es über „In Dateien sichern“ ablegen.')
     } catch (error) {
-      setBackupMessage(error instanceof Error ? error.message : 'Backup konnte nicht erstellt werden.')
+      if (error instanceof DOMException && error.name === 'AbortError') setBackupMessage('Speichern wurde abgebrochen.')
+      else setBackupMessage(error instanceof Error ? error.message : 'Backup konnte nicht erstellt werden.')
     } finally {
       setBackupBusy(false)
     }
@@ -210,30 +297,54 @@ function App() {
     if (!file) return
     setBackupBusy(true)
     setBackupMessage('')
+    const createdPaths: string[] = []
     try {
-      const parsed = JSON.parse(await file.text()) as Partial<ResellingBackup>
-      if (parsed.format !== 'reselling-manager-backup' || parsed.version !== 1 || !Array.isArray(parsed.products) || !parsed.receipts || typeof parsed.receipts !== 'object') {
-        throw new Error('Diese Datei ist kein gültiges Reselling-Manager-Backup.')
+      let restoredProducts: Product[]
+      const receiptFiles: Record<string, { name: string; type: string; bytes: Uint8Array }> = {}
+      if (file.name.toLowerCase().endsWith('.zip') || file.type === 'application/zip' || file.type === 'application/x-zip-compressed') {
+        const archive = await readZip(file)
+        const manifest = JSON.parse(new TextDecoder().decode(archive['backup.json'])) as Partial<ResellingBackupV2>
+        if (manifest.format !== 'reselling-manager-backup' || manifest.version !== 2 || !Array.isArray(manifest.products)) throw new Error('Diese ZIP-Datei ist kein gültiges Reselling-Manager-Backup.')
+        restoredProducts = manifest.products as Product[]
+        for (const product of restoredProducts) {
+          const path = typeof product.receiptPath === 'string' && product.receiptPath.startsWith('backup:') ? product.receiptPath.slice(7) : ''
+          if (!path) continue
+          const data = archive[path]
+          if (!data) throw new Error('Ein zugeordneteter Beleg fehlt im Backup. Deine bisherigen Daten bleiben unverändert.')
+          const extension = path.split('.').pop()?.toLowerCase() || 'bin'
+          const type = extension === 'pdf' ? 'application/pdf' : extension === 'jpg' || extension === 'jpeg' ? 'image/jpeg' : extension === 'png' ? 'image/png' : extension === 'webp' ? 'image/webp' : 'application/octet-stream'
+          receiptFiles[path] = { name: path.split('/').pop() || 'beleg', type, bytes: data }
+        }
+      } else {
+        const parsed = JSON.parse(await file.text()) as Partial<ResellingBackupV1>
+        if (parsed.format !== 'reselling-manager-backup' || parsed.version !== 1 || !Array.isArray(parsed.products) || !parsed.receipts || typeof parsed.receipts !== 'object') throw new Error('Diese Datei ist weder ein ZIP-Backup noch ein gültiges älteres JSON-Backup.')
+        restoredProducts = parsed.products
+        for (const [path, receipt] of Object.entries(parsed.receipts)) {
+          if (!receipt || typeof receipt.data !== 'string' || typeof receipt.name !== 'string' || typeof receipt.type !== 'string') throw new Error('Das JSON-Backup enthält einen beschädigten Beleg.')
+          const blob = dataUrlToBlob(receipt.data)
+          receiptFiles[path] = { name: receipt.name, type: receipt.type, bytes: new Uint8Array(await blob.arrayBuffer()) }
+        }
       }
+      if (!restoredProducts.every(product => product && typeof product.id === 'string' && typeof product.name === 'string')) throw new Error('Das Backup enthält ungültige Produktdaten.')
       if (!window.confirm('Das Backup ersetzt alle aktuell gespeicherten Produkte und Belege. Möchtest du fortfahren?')) return
       const newPaths: Record<string, string> = {}
-      for (const [oldPath, receipt] of Object.entries(parsed.receipts)) {
-        if (!receipt || typeof receipt.data !== 'string' || typeof receipt.name !== 'string' || typeof receipt.type !== 'string') {
-          throw new Error('Das Backup enthält einen beschädigten Beleg. Deine bisherigen Daten bleiben erhalten.')
-        }
-        const blob = dataUrlToBlob(receipt.data)
-        newPaths[oldPath] = await saveLocalReceipt(new File([blob], receipt.name, { type: receipt.type }))
+      for (const [archivePath, receipt] of Object.entries(receiptFiles)) {
+        const path = await saveLocalReceipt(new File([receipt.bytes], receipt.name, { type: receipt.type }))
+        createdPaths.push(path)
+        newPaths[archivePath] = path
       }
-      const restored = parsed.products.map(product => {
-        if (!product || typeof product.id !== 'string' || typeof product.name !== 'string') throw new Error('Das Backup enthält ungültige Produktdaten.')
+      const finalProducts = restoredProducts.map(product => {
         const oldPath = typeof product.receiptPath === 'string' ? product.receiptPath : ''
-        if (oldPath.startsWith('local:') && !newPaths[oldPath]) throw new Error('Zu einem Produkt fehlt ein Beleg im Backup. Deine bisherigen Daten bleiben erhalten.')
-        return { ...product, receiptPath: newPaths[oldPath] || '' } as Product
+        const key = oldPath.startsWith('backup:') ? oldPath.slice(7) : oldPath
+        if (key && receiptFiles[key] && !newPaths[key]) throw new Error('Ein Beleg konnte nicht wiederhergestellt werden.')
+        if (oldPath.startsWith('local:') && !newPaths[oldPath]) throw new Error('Ein Beleg fehlt im Backup. Deine bisherigen Daten bleiben unverändert.')
+        return { ...product, receiptPath: newPaths[key] || '' }
       })
-      localStorage.setItem(PRODUCTS_STORAGE_KEY, JSON.stringify(restored))
-      setProducts(restored)
-      setBackupMessage('Wiederherstellung erfolgreich: ' + restored.length + ' Produkte und ' + Object.keys(newPaths).length + ' Belege importiert.')
+      localStorage.setItem(PRODUCTS_STORAGE_KEY, JSON.stringify(finalProducts))
+      setProducts(finalProducts)
+      setBackupMessage('Wiederherstellung erfolgreich: ' + finalProducts.length + ' Produkte und ' + Object.keys(newPaths).length + ' Originalbelege importiert.')
     } catch (error) {
+      await Promise.all(createdPaths.map(path => deleteLocalReceipt(path).catch(() => undefined)))
       setBackupMessage(error instanceof Error ? error.message : 'Backup konnte nicht wiederhergestellt werden.')
     } finally {
       setBackupBusy(false)
@@ -319,7 +430,7 @@ function App() {
         </nav>
         <div className="sidebar-spacer"/>
         <button className={section === 'Einstellungen' ? 'nav-link selected' : 'nav-link'} onClick={() => setSection('Einstellungen')}><Settings size={18}/><span>Einstellungen</span></button>
-        <button className="profile-card" onClick={() => { setSection('Einstellungen'); setMobileNav(false) }} title="Lokale Einstellungen öffnen"><div className="profile-avatar">N</div><div className="profile-copy"><strong>Mein Workspace</strong><span>Lokales Gerät</span></div><ChevronDown size={15} className="profile-chevron"/></button>
+        <button className="profile-card" onClick={() => { setSection(current => current === 'Einstellungen' ? 'Übersicht' : 'Einstellungen'); setMobileNav(false) }} title="Einstellungen öffnen oder schließen"><div className="profile-avatar">N</div><div className="profile-copy"><strong>Mein Workspace</strong><span>Lokales Gerät</span></div><ChevronDown size={15} className="profile-chevron"/></button>
         <div className="sidebar-foot">RESSELLMANAGER <span>·</span> V 0.1</div>
       </aside>
 
@@ -329,7 +440,7 @@ function App() {
         <header className="topbar">
           <button className="mobile-menu" onClick={() => setMobileNav(true)}><Menu size={20}/></button>
           <div className="breadcrumbs"><span>Workspace</span><b>/</b><strong>{section}</strong></div>
-          <div className="topbar-right"><span className="local-status"><i/> Nur dieses Gerät</span><button className="top-icon" aria-label="Hilfe" title="Hilfe" onClick={() => setShowHelp(true)}><CircleHelp size={18}/></button><button className="theme-toggle" aria-label={theme === 'dark' ? 'Helles Design aktivieren' : 'Dark Mode aktivieren'} title={theme === 'dark' ? 'Helles Design' : 'Dark Mode'} onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}>{theme === 'dark' ? <Sun size={16}/> : <Moon size={16}/>}</button><button className="top-avatar top-avatar-button" onClick={() => setSection('Einstellungen')} title="Einstellungen">N</button></div>
+          <div className="topbar-right"><span className="local-status"><i/> Nur dieses Gerät</span><button className="top-icon" aria-label="Hilfe" title="Hilfe" onClick={() => setShowHelp(true)}><CircleHelp size={18}/></button><button className="theme-toggle" aria-label={theme === 'dark' ? 'Helles Design aktivieren' : 'Dark Mode aktivieren'} title={theme === 'dark' ? 'Helles Design' : 'Dark Mode'} onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}>{theme === 'dark' ? <Sun size={16}/> : <Moon size={16}/>}</button><button className="top-avatar top-avatar-button" onClick={() => setSection(current => current === 'Einstellungen' ? 'Übersicht' : 'Einstellungen')} title="Einstellungen öffnen oder schließen" aria-expanded={section === 'Einstellungen'}>N</button></div>
         </header>
 
         <div className="page-wrap">
@@ -352,7 +463,7 @@ function App() {
                 <section className="panel quick-panel"><div className="panel-title-row"><div><h2>Schnellübersicht</h2><p>Deine offenen Bestände</p></div><Box size={18} className="muted-icon"/></div><div className="quick-row"><span>Stück auf Lager</span><strong>{stockUnits}</strong></div><div className="quick-row"><span>Verkaufte Produkte</span><strong>{sold.length}</strong></div><div className="quick-row"><span>Investiertes Kapital</span><strong>{money(investment)}</strong></div><button className="subtle-button" onClick={() => setSection('Produkte')}>Bestand ansehen <ArrowUpRight size={15}/></button></section>
               </div>
               <section className="panel recent-panel"><div className="panel-title-row"><div><h2>Zuletzt hinzugefügt</h2><p>Deine neuesten Produkte</p></div><button className="text-action" onClick={() => setSection('Produkte')}>Alle Produkte ansehen <ArrowUpRight size={14}/></button></div>
-                {products.length === 0 ? <EmptyState icon={<Package size={22}/>} title="Dein Reselling startet hier" text="Lege dein erstes Produkt an und behalte Einkauf, Verkauf und Gewinn im Blick." action={<button className="button-secondary" onClick={openNew}><Plus size={15}/> Erstes Produkt anlegen</button>}/> : <ProductTable products={products.slice(0, 5)} onEdit={editProduct} onDelete={deleteProduct} onSell={setSelling}/>}
+                {products.length === 0 ? <EmptyState icon={<Package size={22}/>} title="Dein Reselling startet hier" text="Lege dein erstes Produkt an und behalte Einkauf, Verkauf und Gewinn im Blick." action={<button className="button-secondary" onClick={openNew}><Plus size={15}/> Erstes Produkt anlegen</button>}/> : <ProductTable products={products.slice(0, 5)} onEdit={editProduct} onDelete={deleteProduct} onSell={setSelling} onReceipt={setReceiptProduct}/>}
               </section>
             </>
           )}
@@ -375,7 +486,7 @@ function App() {
           )}
 
           {section === 'Auswertungen' && <section className="panel coming-panel"><div className="coming-icon"><Sparkles size={23}/></div><h2>Auswertungen</h2><p>Hier bauen wir deine Monatsübersichten, Gewinnentwicklung und Plattformvergleiche auf.</p><span className="coming-tag">WIRD ALS NÄCHSTES ERWEITERT</span></section>}
-          {section === 'Einstellungen' && <section className="panel settings-panel"><div className="panel-title-row"><div><h2>Lokaler Workspace</h2><p>Die App läuft ohne Konto, Anmeldung oder E-Mail-Versand.</p></div></div><div className="setting-row"><div><strong>Betriebsmodus</strong><span>Persönliche Nutzung auf diesem Gerät.</span></div><span className="setting-pill">Ohne Login</span></div><div className="setting-row"><div><strong>Erscheinungsbild</strong><span>Zwischen dem dunklen Neon-Look und dem hellen Design wechseln.</span></div><button className="setting-toggle" onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}>{theme === 'dark' ? <Sun size={15}/> : <Moon size={15}/>} {theme === 'dark' ? 'Helles Design' : 'Dark Mode'}</button></div><div className="setting-row"><div><strong>Datenspeicherung</strong><span>Produkte werden nur in diesem Browser gespeichert. Es gibt keine Cloud-Synchronisierung.</span></div><span className="setting-pill">Lokal</span></div><div className="setting-row"><div><strong>Belege</strong><span>PDFs und Bilder werden im lokalen Browserspeicher dieses Geräts abgelegt.</span></div><span className="setting-pill">Auf diesem Gerät</span></div><div className="backup-section"><div className="backup-heading"><div><strong>Backup erstellen</strong><span>Sichere alle Produkte und Originalbelege in einer Datei. Die Datei kannst du später hier wieder hochladen.</span></div><HardDrive size={20}/></div><div className="backup-actions"><button className="button-primary" onClick={() => void createBackup()} disabled={backupBusy}><ArrowDownToLine size={15}/>{backupBusy ? 'Bitte warten …' : 'Backup-Datei erstellen'}</button><button className="button-secondary" onClick={() => backupInput.current?.click()} disabled={backupBusy}><FileUp size={15}/> Backup hochladen</button><input ref={backupInput} type="file" accept=".json,application/json" hidden onChange={e => void restoreBackup(e.target.files?.[0])}/></div>{backupMessage && <p className="backup-message" role="status">{backupMessage}</p>}<small>Wichtig: Beim Wiederherstellen werden die aktuellen Daten durch den Inhalt des Backups ersetzt.</small></div><div className="setting-row"><div><strong>Währung</strong><span>Alle Beträge werden in Euro angezeigt.</span></div><span className="setting-pill">EUR (€)</span></div><div className="setting-row"><div><strong>App-Version</strong><span>Reselling Manager – Invoice Studio</span></div><span className="setting-pill">0.3.0 Local</span></div></section>}
+          {section === 'Einstellungen' && <section className="panel settings-panel"><div className="panel-title-row"><div><h2>Lokaler Workspace</h2><p>Die App läuft ohne Konto, Anmeldung oder E-Mail-Versand.</p></div></div><div className="setting-row"><div><strong>Betriebsmodus</strong><span>Persönliche Nutzung auf diesem Gerät.</span></div><span className="setting-pill">Ohne Login</span></div><div className="setting-row"><div><strong>Erscheinungsbild</strong><span>Zwischen dem dunklen Neon-Look und dem hellen Design wechseln.</span></div><button className="setting-toggle" onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}>{theme === 'dark' ? <Sun size={15}/> : <Moon size={15}/>} {theme === 'dark' ? 'Helles Design' : 'Dark Mode'}</button></div><div className="setting-row"><div><strong>Datenspeicherung</strong><span>Produkte werden nur in diesem Browser gespeichert. Es gibt keine Cloud-Synchronisierung.</span></div><span className="setting-pill">Lokal</span></div><div className="setting-row"><div><strong>Belege</strong><span>PDFs und Bilder werden im lokalen Browserspeicher dieses Geräts abgelegt.</span></div><span className="setting-pill">Auf diesem Gerät</span></div><div className="backup-section"><div className="backup-heading"><div><strong>Backup erstellen</strong><span>Sichere Produkte und Originalbelege als ZIP-Datei. Du kannst sie später hier wieder hochladen.</span></div><HardDrive size={20}/></div><div className="backup-actions"><button className="button-primary" onClick={() => void createBackup()} disabled={backupBusy}><ArrowDownToLine size={15}/>{backupBusy ? 'Bitte warten …' : 'Backup-Datei erstellen'}</button><button className="button-secondary" onClick={() => backupInput.current?.click()} disabled={backupBusy}><FileUp size={15}/> Backup hochladen</button><input ref={backupInput} type="file" accept=".zip,application/zip,.json,application/json,application/octet-stream" hidden onChange={e => void restoreBackup(e.target.files?.[0])}/></div>{backupMessage && <p className="backup-message" role="status">{backupMessage}</p>}<small>Es entsteht eine normale ZIP-Datei mit backup.json und separaten Originalbelegen. Ältere JSON-Backups bleiben importierbar. Beim Wiederherstellen werden die aktuellen Daten ersetzt.</small></div><div className="setting-row"><div><strong>Währung</strong><span>Wähle die Währung, in der Beträge angezeigt werden. Zahlenwerte werden dabei nicht umgerechnet.</span></div><select className="currency-select" value={currency} onChange={e => setCurrency(e.target.value)} aria-label="Anzeigewährung"><option value="EUR">Euro (€)</option><option value="USD">US-Dollar ($)</option><option value="GBP">Britisches Pfund (£)</option><option value="CHF">Schweizer Franken (CHF)</option></select></div><div className="setting-row"><div><strong>App-Version</strong><span>Reselling Manager – Invoice Studio</span></div><span className="setting-pill">0.3.0 Local</span></div></section>}
           <footer className="page-footer">Reselling Manager <span>·</span> Einfach den Überblick behalten.</footer>
         </div>
       </main>
@@ -383,6 +494,7 @@ function App() {
       {showForm && <ProductModal product={editing} onClose={() => {setShowForm(false);setEditing(null)}} onSave={saveProduct}/>}
       {selling && <SaleModal product={selling} onClose={() => setSelling(null)} onSave={saveSale}/>}
       {showHelp && <HelpModal onClose={() => setShowHelp(false)}/>}
+      {receiptProduct && <ReceiptModal product={receiptProduct} onClose={() => setReceiptProduct(null)}/>}
     </div>
   )
 }
@@ -398,11 +510,26 @@ function EmptyState({ icon, title, text, action }: { icon: React.ReactNode; titl
   return <div className="empty-state"><div className="empty-icon">{icon}</div><strong>{title}</strong><p>{text}</p>{action}</div>
 }
 
-function ProductTable({ products, onEdit, onDelete, onSell }: { products: Product[]; onEdit: (p: Product) => void; onDelete: (id: string) => void; onSell: (p: Product) => void }) {
-  return <div className="table-scroll"><table className="product-table"><thead><tr><th>PRODUKT</th><th>STÜCK</th><th>PLATTFORM</th><th>EINKAUF GESAMT</th><th>VERKAUF</th><th>GEWINN</th><th>STATUS</th><th/></tr></thead><tbody>{products.map(p => <tr key={p.id}><td><div className="product-name"><div className="product-thumb">{p.imageUrl ? <img src={p.imageUrl} alt={p.name}/> : <Tag size={16}/>}</div><div><strong>{p.name}</strong><span>{p.category || 'Ohne Kategorie'}{p.receiptPath ? ' · Beleg gespeichert' : ''}</span></div></div></td><td>{p.quantity || 1}</td><td>{p.platform || '–'}</td><td>{money(p.purchasePrice)}</td><td>{p.status === 'Verkauft' ? money(p.salePrice) : '–'}</td><td className={p.status === 'Verkauft' ? (profit(p) >= 0 ? 'positive' : 'negative') : 'table-muted'}>{p.status === 'Verkauft' ? money(profit(p)) : '–'}</td><td><span className={p.status === 'Verkauft' ? 'status-badge sold' : 'status-badge stock'}>{p.status}</span></td><td><div className="row-actions"><button className="sale-action" aria-label={p.status === 'Verkauft' ? 'Verkauf bearbeiten' : 'Verkauf eintragen'} title={p.status === 'Verkauft' ? 'Verkauf bearbeiten' : 'Verkauf eintragen'} onClick={() => onSell(p)}><DollarSign size={14}/><span>{p.status === 'Verkauft' ? 'Anpassen' : 'Verkauf'}</span></button><button aria-label="Bearbeiten" onClick={() => onEdit(p)}><Pencil size={15}/></button><button aria-label="Löschen" onClick={() => onDelete(p.id)}><Trash2 size={15}/></button></div></td></tr>)}</tbody></table></div>
+function ProductTable({ products, onEdit, onDelete, onSell, onReceipt }: { products: Product[]; onEdit: (p: Product) => void; onDelete: (id: string) => void; onSell: (p: Product) => void; onReceipt: (p: Product) => void }) {
+  return <div className="table-scroll"><table className="product-table"><thead><tr><th>PRODUKT</th><th>STÜCK</th><th>PLATTFORM</th><th>EINKAUF GESAMT</th><th>VERKAUF</th><th>GEWINN</th><th>STATUS</th><th/></tr></thead><tbody>{products.map(p => <tr key={p.id}><td><div className="product-name"><div className="product-thumb">{p.imageUrl ? <img src={p.imageUrl} alt={p.name}/> : <Tag size={16}/>}</div><div><strong>{p.name}</strong><span>{p.category || 'Ohne Kategorie'}</span>{p.receiptPath && <button className="receipt-inline" onClick={() => onReceipt(p)} title="Originalbeleg öffnen"><FileText size={12}/> Beleg öffnen</button>}</div></div></td><td>{p.quantity || 1}</td><td>{p.platform || '–'}</td><td>{money(p.purchasePrice)}</td><td>{p.status === 'Verkauft' ? money(p.salePrice) : '–'}</td><td className={p.status === 'Verkauft' ? (profit(p) >= 0 ? 'positive' : 'negative') : 'table-muted'}>{p.status === 'Verkauft' ? money(profit(p)) : '–'}</td><td><span className={p.status === 'Verkauft' ? 'status-badge sold' : 'status-badge stock'}>{p.status}</span></td><td><div className="row-actions"><button className="sale-action" aria-label={p.status === 'Verkauft' ? 'Verkauf bearbeiten' : 'Verkauf eintragen'} title={p.status === 'Verkauft' ? 'Verkauf bearbeiten' : 'Verkauf eintragen'} onClick={() => onSell(p)}><DollarSign size={14}/><span>{p.status === 'Verkauft' ? 'Anpassen' : 'Verkauf'}</span></button><button aria-label="Bearbeiten" onClick={() => onEdit(p)}><Pencil size={15}/></button><button aria-label="Löschen" onClick={() => onDelete(p.id)}><Trash2 size={15}/></button></div></td></tr>)}</tbody></table></div>
 }
 
 
+
+function ReceiptModal({ product, onClose }: { product: Product; onClose: () => void }) {
+  const [url, setUrl] = useState('')
+  const [error, setError] = useState('')
+  useEffect(() => {
+    let activeUrl = ''
+    readLocalReceipt(product.receiptPath).then(blob => {
+      if (!blob) { setError('Der lokal gespeicherte Beleg wurde nicht gefunden.'); return }
+      activeUrl = URL.createObjectURL(blob)
+      setUrl(activeUrl)
+    }).catch(() => setError('Der Beleg konnte nicht geöffnet werden.'))
+    return () => { if (activeUrl) URL.revokeObjectURL(activeUrl) }
+  }, [product.receiptPath])
+  return <div className="modal-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) onClose() }}><section className="modal-card receipt-modal"><div className="modal-header"><div><span className="overline">ORIGINALBELEG</span><h2>{product.name}</h2><p>Der Beleg wird direkt aus dem lokalen Gerätespeicher geladen.</p></div><button className="modal-close" onClick={onClose}><X size={19}/></button></div>{error ? <p className="receipt-error">{error}</p> : url ? <iframe className="receipt-frame" src={url} title={'Beleg für ' + product.name}/> : <div className="receipt-loading"><LoaderCircle className="spin" size={20}/> Beleg wird geöffnet …</div>}<div className="modal-actions"><button className="button-ghost" onClick={onClose}>Schließen</button>{url && <a className="button-primary receipt-download" href={url} target="_blank" rel="noreferrer">In neuem Tab öffnen <ExternalLink size={14}/></a>}</div></section></div>
+}
 
 
 function SaleModal({ product, onClose, onSave }: {

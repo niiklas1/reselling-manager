@@ -6,6 +6,7 @@ export type InvoiceLineItem = {
   quantity: number
   unitPrice: number | null
   amount: number
+  confidence: number
 }
 
 export type InvoiceExtraction = {
@@ -22,7 +23,7 @@ export type InvoiceExtraction = {
 type PositionedLine = { text: string; left: number; top: number; bottom: number }
 
 function parseEuro(value: string): number | null {
-  let normalized = value.replace(/[€\s]/g, '').replace(/[^\d,.-]/g, '')
+  let normalized = value.replace(/(?:EUR|USD|GBP|CHF)/gi, '').replace(/[€$£\s]/g, '').replace(/[^\d,.-]/g, '')
   const comma = normalized.lastIndexOf(',')
   const dot = normalized.lastIndexOf('.')
   if (comma >= 0 && dot >= 0) {
@@ -97,63 +98,175 @@ function pdfTextByPosition(items: unknown[]): string {
     .join('\n')
 }
 
-function parseMoneyMatches(line: string): Array<{ value: number; index: number }> {
-  const pattern = /(?:\d{1,3}(?:[.\s]\d{3})+|\d+)[,.]\d{2}/g
-  return [...line.matchAll(pattern)].flatMap(match => {
+type MoneyToken = { value: number; index: number; raw: string }
+
+const MONEY_PATTERN = /(?:€|EUR\s*)?\s*(?:\d{1,3}(?:[.\s]\d{3})+|\d+)[,.]\d{2}\s*(?:€|EUR)?/gi
+
+function parseMoneyMatches(line: string): MoneyToken[] {
+  return [...line.matchAll(MONEY_PATTERN)].flatMap(match => {
     const value = parseEuro(match[0])
-    return value === null ? [] : [{ value, index: match.index ?? 0 }]
+    return value === null ? [] : [{ value, index: match.index ?? 0, raw: match[0] }]
   })
 }
 
-function parseLineItems(lines: string[]): InvoiceLineItem[] {
-  // Be deliberately conservative: only keep rows that look like actual merchandise,
-  // not payment details, totals, contact information, or receipt metadata.
-  const excluded = /\b(gesamtbetrag|rechnungsbetrag|endbetrag|zu zahlen|zahlbetrag|zwischensumme|summe|total|brutto|netto|mwst|ust\.?|mehrwertsteuer|steuerbetrag|rückgeld|gegeben|kartenzahlung|barzahlung|ec[- ]?karte|kreditkarte|visa|mastercard|paypal|zahlung|bezahlt|gutschein|rabatt|versandkosten|lieferkosten|porto|pfand|kaution|anzahlung|gebühr|gebuehr|transaktionsnummer|autorisierung|terminal|kasse|bonnummer|belegnummer|rechnungsnummer|kundennummer|bestellnummer|auftragsnummer|lieferant|rechnung|quittung|kassenbon|datum|uhrzeit|telefon|tel\.?|fax|email|e-mail|www\.|http|iban|bic|filiale|straße|str\.?|plz|adresse|kontakt|seite \d|seite von)/i
-  const result: InvoiceLineItem[] = []
+const SUMMARY_START = /\b(zwischensumme|warenwert|summe\s+artikel|artikel\s*summe|subtotal|gesamtbetrag|rechnungsbetrag|endbetrag|endsumme|zu\s+zahlen|zahlbetrag|mwst|mehrwertsteuer|umsatzsteuer|steuerbetrag|vat|tax\s+total|amount\s+due|invoice\s+total|gesamt\s*brutto)\b/i
+const EXCLUDED_ROW = /\b(gesamtbetrag|rechnungsbetrag|endbetrag|endsumme|zu\s+zahlen|zahlbetrag|zwischensumme|warenwert|subtotal|summe|total|brutto|netto|mwst|ust\.?|mehrwertsteuer|umsatzsteuer|steuerbetrag|rückgeld|gegeben|kartenzahlung|barzahlung|ec[- ]?karte|kreditkarte|visa|mastercard|paypal|zahlung|bezahlt|gutschein|rabatt|versandkosten|lieferkosten|porto|pfand|kaution|anzahlung|gebühr|gebuehr|transaktionsnummer|autorisierung|terminal|kasse|bonnummer|belegnummer|rechnungsnummer|kundennummer|bestellnummer|auftragsnummer|lieferant|rechnung|quittung|kassenbon|datum|uhrzeit|telefon|tel\.?|fax|email|e-mail|www\.|https?:|iban|bic|filiale|straße|str\.?|plz|adresse|kontakt|kundendienst|öffnungszeiten|oeffnungszeiten|artikelnummer|art\.?\s*nr|sku|ean|gtin|barcode|referenz|reference|order\s*(?:no|number)|invoice\s*(?:no|number)|page\s+\d|seite\s+\d)\b/i
+const TABLE_HEADER_WORDS = /\b(artikel|produkt|beschreibung|bezeichnung|item|description|menge|quantity|qty|anzahl|stück|stk|einzelpreis|stückpreis|unit\s*price|preis|price|betrag|amount|gesamtpreis|line\s*total)\b/i
+
+function detectTableHeader(lines: string[]): number {
+  for (let index = 0; index < lines.length; index++) {
+    const line = lines[index]
+    const terms = [...line.matchAll(TABLE_HEADER_WORDS)].map(match => match[0].toLowerCase())
+    const hasDescription = /artikel|produkt|beschreibung|bezeichnung|item|description/i.test(line)
+    const hasPrice = /einzelpreis|stückpreis|unit\s*price|preis|price|betrag|amount|gesamtpreis|line\s*total/i.test(line)
+    const hasQuantity = /menge|quantity|qty|anzahl|stück|stk/i.test(line)
+    if (terms.length >= 3 || (hasDescription && hasPrice && hasQuantity)) return index
+  }
+  return -1
+}
+
+function findQuantity(line: string): number {
+  const match = line.match(/\b(?:qty|quantity|menge|anzahl)\s*[:=]?\s*(\d{1,4})\b|\b(\d{1,4})\s*(?:x|×|stk\.?|stück|pcs?\.?|st\.?)(?=\s|$)/i)
+  const value = Number(match?.[1] || match?.[2] || 1)
+  return Number.isInteger(value) && value > 0 && value <= 10000 ? value : 1
+}
+
+function extractDescription(line: string, prices: MoneyToken[]): string {
+  const firstPrice = prices[0]
+  const beforePrice = firstPrice ? line.slice(0, firstPrice.index) : line
+  return beforePrice
+    .replace(/^\s*(?:pos\.?\s*)?\d{1,3}[.)#:-]?\s+/i, '')
+    .replace(/\b(?:qty|quantity|menge|anzahl)\s*[:=]?\s*\d{1,4}\b/ig, ' ')
+    .replace(/\b\d{1,4}\s*(?:x|×|stk\.?|stück|pcs?\.?|st\.?)\b/ig, ' ')
+    .replace(/\b(?:ean|gtin|sku|artikelnummer|art\.?\s*nr)\s*[:#-]?\s*[A-Z0-9-]{5,}\b/ig, ' ')
+    .replace(/[|:;–-]+$/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function candidateConfidence(line: string, description: string, quantity: number, prices: MoneyToken[], hasHeader: boolean): number {
+  const words = description.match(/[A-Za-zÄÖÜäöüß]{2,}/g) || []
+  const letters = (description.match(/[A-Za-zÄÖÜäöüß]/g) || []).length
+  const digits = (description.match(/\d/g) || []).length
+  const currencyMarker = /€|\bEUR\b/i.test(line)
+  const hasQuantityMarker = quantity > 1 || /\b(?:qty|quantity|menge|anzahl|\d+\s*(?:x|×|stk\.?|stück|pcs?))\b/i.test(line)
+  const hasTwoPrices = prices.length >= 2
+  const longestWord = Math.max(0, ...words.map(word => word.length))
+  let score = 0.36
+  if (words.length >= 2) score += 0.15
+  else if (longestWord >= 6) score += 0.13
+  if (currencyMarker) score += 0.10
+  if (hasQuantityMarker) score += 0.12
+  if (hasTwoPrices) score += 0.11
+  if (hasHeader) score += 0.10
+  if (description.length >= 12 && letters >= 8) score += 0.05
+  if (digits > 0 && digits > letters * 0.8) score -= 0.22
+  if (line.length > 140) score -= 0.12
+  return Math.max(0, Math.min(0.99, score))
+}
+
+function findSummaryAmount(lines: string[], pattern: RegExp): number | null {
   for (const line of lines) {
-    if (excluded.test(line)) continue
+    if (!pattern.test(line)) continue
+    const matches = parseMoneyMatches(line)
+    if (matches.length) return matches[matches.length - 1].value
+  }
+  return null
+}
+
+function selectCandidatesAgainstSubtotal(candidates: InvoiceLineItem[], target: number): InvoiceLineItem[] {
+  if (candidates.length < 2 || !Number.isFinite(target) || target <= 0) return candidates
+  const targetCents = Math.round(target * 100)
+  const totalCents = candidates.reduce((sum, item) => sum + Math.round(item.amount * 100), 0)
+  if (totalCents <= targetCents + 2) return candidates
+  if (targetCents > 2000000 || candidates.length > 60) return candidates.filter(item => item.confidence >= 0.72)
+
+  // Dynamic programming chooses a subset whose line totals reconcile to the printed
+  // subtotal. This prevents OCR fragments with plausible-looking prices from becoming
+  // extra products when their combined amounts exceed the actual merchandise total.
+  const states = new Map<number, { score: number; indexes: number[] }>([[0, { score: 0, indexes: [] }]])
+  for (let index = 0; index < candidates.length; index++) {
+    const cents = Math.round(candidates[index].amount * 100)
+    const prior = [...states.entries()]
+    for (const [sum, state] of prior) {
+      const next = sum + cents
+      if (next > targetCents + 1) continue
+      const score = state.score + candidates[index].confidence
+      const existing = states.get(next)
+      if (!existing || score > existing.score) states.set(next, { score, indexes: [...state.indexes, index] })
+    }
+    if (states.size > 25000) {
+      const ranked = [...states.entries()].sort((a, b) =>
+        Math.abs(a[0] - targetCents) - Math.abs(b[0] - targetCents) || b[1].score - a[1].score
+      ).slice(0, 25000)
+      states.clear()
+      ranked.forEach(([sum, state]) => states.set(sum, state))
+    }
+  }
+  const exact = states.get(targetCents) || states.get(targetCents - 1) || states.get(targetCents + 1)
+  if (exact?.indexes.length) return exact.indexes.map(index => candidates[index])
+  return candidates.filter(item => item.confidence >= 0.76)
+}
+
+function parseLineItems(lines: string[]): InvoiceLineItem[] {
+  const headerIndex = detectTableHeader(lines)
+  const startIndex = headerIndex >= 0 ? headerIndex + 1 : 0
+  const summaryIndex = lines.findIndex((line, index) => index >= startIndex && SUMMARY_START.test(line))
+  const endIndex = summaryIndex >= 0 ? summaryIndex : lines.length
+  const rows = lines.slice(startIndex, endIndex)
+  const result: InvoiceLineItem[] = []
+
+  for (const line of rows) {
+    if (!line || EXCLUDED_ROW.test(line)) continue
+    if (/https?:\/\/|www\.|@|\b(?:iban|bic|swift)\b/i.test(line)) continue
     const prices = parseMoneyMatches(line)
     if (!prices.length) continue
 
-    const firstPrice = prices[0]
-    let description = line.slice(0, firstPrice.index)
-      .replace(/^\s*(?:\d{1,3}[.)]\s*|\d{1,3}\s*[x×]\s*)/i, '')
-      .replace(/[|:;–-]+$/g, '')
-      .replace(/\s+/g, ' ')
-      .trim()
-
-    // Product titles need readable words; this rejects stray totals, codes and OCR fragments.
+    const description = extractDescription(line, prices)
     const words = description.match(/[A-Za-zÄÖÜäöüß]{2,}/g) || []
     const letters = (description.match(/[A-Za-zÄÖÜäöüß]/g) || []).length
     const digits = (description.match(/\d/g) || []).length
-    if (description.length < 3 || words.length === 0 || letters < 3) continue
-    if (digits > letters * 1.5) continue
-    if (/^(?:pos(?:ition)?|art(?:ikel)?(?:-?nr)?|sku|ean|barcode|nr\.?|id)\b/i.test(description)) continue
-    if (/^[A-Z0-9/_-]{2,18}$/i.test(description) && !/\s/.test(description)) continue
+    const quantity = findQuantity(line)
 
-    const quantityMatch = line.match(/\b(\d{1,3})\s*(?:x|×|stk\.?|stück|pcs?)\b/i)
-    const quantity = quantityMatch ? Math.max(1, Number(quantityMatch[1])) : 1
-    const amount = prices[prices.length - 1].value
-    const unitPrice = prices.length > 1 ? prices[prices.length - 2].value : quantity > 1 ? amount : null
-    const lineAmount = quantity > 1 && prices.length === 1 ? amount * quantity : amount
-    if (!Number.isFinite(lineAmount) || lineAmount <= 0 || lineAmount > 100000) continue
+    if (description.length < 3 || letters < 4 || words.length === 0) continue
+    if (description.length > 100 || words.length > 10) continue
+    if (digits > letters * 0.8) continue
+    if (/^(?:pos(?:ition)?|art(?:ikel)?(?:-?nr)?|sku|ean|barcode|nr\.?|id|ref)\b/i.test(description)) continue
+    if (/^[A-Z0-9/_-]{2,24}$/i.test(description) && !/\s/.test(description)) continue
 
-    // The description should be a merchandise name, not a long mixed OCR row.
-    if (description.length > 100 || words.length > 12) continue
-    result.push({ id: 'line-' + (result.length + 1), description, quantity, unitPrice, amount: Number(lineAmount.toFixed(2)) })
+    const confidence = candidateConfidence(line, description, quantity, prices, headerIndex >= 0)
+    const hasProductLikeDescription = words.length >= 2 || Math.max(...words.map(word => word.length)) >= 6
+    if (!hasProductLikeDescription || confidence < 0.55) continue
+
+    const lineAmount = prices[prices.length - 1].value
+    const unitPrice = quantity > 1
+      ? (prices.length >= 2 ? prices[prices.length - 2].value : lineAmount / quantity)
+      : (prices.length >= 2 ? prices[prices.length - 2].value : lineAmount)
+    const amount = Number(lineAmount.toFixed(2))
+    if (!Number.isFinite(amount) || amount <= 0 || amount > 100000) continue
+
+    result.push({
+      id: 'line-' + (result.length + 1),
+      description,
+      quantity,
+      unitPrice: Number(unitPrice.toFixed(2)),
+      amount,
+      confidence: Number(confidence.toFixed(2)),
+    })
   }
-  return result
+
+  const subtotal = findSummaryAmount(lines, /\b(zwischensumme|warenwert|summe\s+artikel|artikel\s*summe|subtotal)\b/i)
+  if (subtotal !== null) return selectCandidatesAgainstSubtotal(result, subtotal)
+  const grandTotal = findSummaryAmount(lines, /\b(gesamtbetrag|rechnungsbetrag|endbetrag|endsumme|zu\s+zahlen|zahlbetrag|invoice\s+total|amount\s+due)\b/i)
+  return grandTotal !== null ? selectCandidatesAgainstSubtotal(result, grandTotal) : result
 }
 
 function parseTotal(text: string): number | null {
   const lines = text.split('\n').map(line => line.trim()).filter(Boolean)
-  const priority = /(gesamtbetrag|rechnungsbetrag|endbetrag|zu zahlen|zahlbetrag|summe|total|brutto)/i
-  for (const line of lines) {
-    if (!priority.test(line)) continue
-    const values = parseMoneyMatches(line)
-    if (values.length) return values[values.length - 1].value
-  }
-  return null
+  const priority = /\b(gesamtbetrag|rechnungsbetrag|endbetrag|endsumme|zu\s+zahlen|zahlbetrag|invoice\s+total|amount\s+due|total\s+amount)\b/i
+  const first = findSummaryAmount(lines, priority)
+  if (first !== null) return first
+  return findSummaryAmount(lines, /\b(brutto|total|summe)\b/i)
 }
 
 export function parseInvoiceText(
@@ -165,14 +278,11 @@ export function parseInvoiceText(
   const lines = text.split('\n').map(line => line.trim()).filter(Boolean)
   const lineItems = parseLineItems(lines)
   const total = parseTotal(text)
-  const fallbackAmounts = lines.flatMap(line => parseMoneyMatches(line).map(match => match.value))
-  const amount = total ?? (lineItems.length ? lineItems.reduce((sum, item) => sum + item.amount, 0) : fallbackAmounts.length ? Math.max(...fallbackAmounts) : null)
+  const amount = total ?? (lineItems.length ? lineItems.reduce((sum, item) => sum + item.amount, 0) : null)
   const dateMatch = text.match(/\b(0?[1-9]|[12]\d|3[01])[./-](0?[1-9]|1[0-2])[./-](20\d{2})\b/)
   const date = dateMatch
     ? dateMatch[3] + '-' + dateMatch[2].padStart(2, '0') + '-' + dateMatch[1].padStart(2, '0')
     : ''
-  // Never guess a product name from arbitrary receipt text. If no clear item row
-  // was found, ask the user to enter the name manually instead.
   const name = lineItems[0]?.description || ''
   const quantity = lineItems.length ? lineItems.reduce((sum, item) => sum + item.quantity, 0) : 1
   return { text, name, amount, date, quantity, lineItems, recognition, backend }
@@ -186,7 +296,15 @@ async function recognizeCanvas(canvas: HTMLCanvasElement, onProgress: (value: nu
     },
   })
   try {
-    const result = await worker.recognize(canvas)
+    const result = await worker.recognize(canvas, {}, { blocks: true })
+    const structuredLines = (result.data.blocks || []).flatMap(block =>
+      block.paragraphs.flatMap(paragraph =>
+        paragraph.lines
+          .filter(line => line.confidence >= 30 && line.text.trim())
+          .map(line => ({ text: line.text.trim(), confidence: line.confidence }))
+      )
+    )
+    if (structuredLines.length) return structuredLines.map(line => line.text).join('\n')
     return result.data.text || ''
   } finally {
     await worker.terminate()

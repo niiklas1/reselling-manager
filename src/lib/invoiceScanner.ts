@@ -106,23 +106,40 @@ function parseMoneyMatches(line: string): Array<{ value: number; index: number }
 }
 
 function parseLineItems(lines: string[]): InvoiceLineItem[] {
-  const excluded = /(gesamtbetrag|rechnungsbetrag|endbetrag|zu zahlen|zahlbetrag|zwischensumme|summe|total|brutto|netto|mwst|ust\.?|mehrwertsteuer|steuerbetrag|rückgeld|gegeben|kartenzahlung|barzahlung)/i
+  // Be deliberately conservative: only keep rows that look like actual merchandise,
+  // not payment details, totals, contact information, or receipt metadata.
+  const excluded = /\\b(gesamtbetrag|rechnungsbetrag|endbetrag|zu zahlen|zahlbetrag|zwischensumme|summe|total|brutto|netto|mwst|ust\\.?|mehrwertsteuer|steuerbetrag|rückgeld|gegeben|kartenzahlung|barzahlung|ec[- ]?karte|kreditkarte|visa|mastercard|paypal|zahlung|bezahlt|gutschein|rabatt|versandkosten|lieferkosten|porto|pfand|kaution|anzahlung|gebühr|gebuehr|transaktionsnummer|autorisierung|terminal|kasse|bonnummer|belegnummer|rechnungsnummer|kundennummer|bestellnummer|auftragsnummer|lieferant|rechnung|quittung|kassenbon|datum|uhrzeit|telefon|tel\\.?|fax|email|e-mail|www\\.|http|iban|bic|filiale|straße|str\\.?|plz|adresse|kontakt|seite \\d|seite von)/i
   const result: InvoiceLineItem[] = []
   for (const line of lines) {
     if (excluded.test(line)) continue
     const prices = parseMoneyMatches(line)
     if (!prices.length) continue
-    const firstPrice = prices[0]
-    let description = line.slice(0, firstPrice.index).replace(/^\s*\d+[.)]\s*/, '').trim()
-    description = description.replace(/[|:;–-]+$/g, '').trim()
-    if (description.length < 2 || !/[A-Za-zÄÖÜäöüß]/.test(description)) continue
 
-    const quantityMatch = line.match(/\b(\d{1,3})\s*(?:x|×|stk\.?|stück|pcs?)\b/i)
+    const firstPrice = prices[0]
+    let description = line.slice(0, firstPrice.index)
+      .replace(/^\\s*(?:\\d{1,3}[.)]\\s*|\\d{1,3}\\s*[x×]\\s*)/i, '')
+      .replace(/[|:;–-]+$/g, '')
+      .replace(/\\s+/g, ' ')
+      .trim()
+
+    // Product titles need readable words; this rejects stray totals, codes and OCR fragments.
+    const words = description.match(/[A-Za-zÄÖÜäöüß]{2,}/g) || []
+    const letters = (description.match(/[A-Za-zÄÖÜäöüß]/g) || []).length
+    const digits = (description.match(/\\d/g) || []).length
+    if (description.length < 3 || words.length === 0 || letters < 3) continue
+    if (digits > letters * 1.5) continue
+    if (/^(?:pos(?:ition)?|art(?:ikel)?(?:-?nr)?|sku|ean|barcode|nr\\.?|id)\\b/i.test(description)) continue
+    if (/^[A-Z0-9/_-]{2,18}$/i.test(description) && !/\\s/.test(description)) continue
+
+    const quantityMatch = line.match(/\\b(\\d{1,3})\\s*(?:x|×|stk\\.?|stück|pcs?)\\b/i)
     const quantity = quantityMatch ? Math.max(1, Number(quantityMatch[1])) : 1
     const amount = prices[prices.length - 1].value
     const unitPrice = prices.length > 1 ? prices[prices.length - 2].value : quantity > 1 ? amount : null
     const lineAmount = quantity > 1 && prices.length === 1 ? amount * quantity : amount
     if (!Number.isFinite(lineAmount) || lineAmount <= 0 || lineAmount > 100000) continue
+
+    // The description should be a merchandise name, not a long mixed OCR row.
+    if (description.length > 100 || words.length > 12) continue
     result.push({ id: 'line-' + (result.length + 1), description, quantity, unitPrice, amount: Number(lineAmount.toFixed(2)) })
   }
   return result
@@ -154,10 +171,9 @@ export function parseInvoiceText(
   const date = dateMatch
     ? dateMatch[3] + '-' + dateMatch[2].padStart(2, '0') + '-' + dateMatch[1].padStart(2, '0')
     : ''
-  const name = lineItems[0]?.description || lines.find(line =>
-    line.length >= 4 && line.length <= 100 && /[A-Za-zÄÖÜäöüß]/.test(line) &&
-    !/^(rechnung|quittung|kassenbon|beleg|datum|uhrzeit|rechnungsnummer|kundennummer|steuer|ust|mwst|gesamt|summe|betrag|bar|ec\b|visa|mastercard|pos\b|menge|preis|netto|brutto|tel|fax|www\.|https?:)/i.test(line)
-  ) || ''
+  // Never guess a product name from arbitrary receipt text. If no clear item row
+  // was found, ask the user to enter the name manually instead.
+  const name = lineItems[0]?.description || ''
   const quantity = lineItems.length ? lineItems.reduce((sum, item) => sum + item.quantity, 0) : 1
   return { text, name, amount, date, quantity, lineItems, recognition, backend }
 }

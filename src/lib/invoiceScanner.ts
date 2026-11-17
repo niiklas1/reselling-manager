@@ -219,8 +219,8 @@ export async function readInvoiceFile(
   file: File,
   onProgress: (value: number, stage: string) => void,
 ): Promise<InvoiceExtraction> {
-  const maxSize = 20 * 1024 * 1024
-  if (file.size > maxSize) throw new Error('Die Datei ist größer als 20 MB. Bitte wähle eine kleinere Datei.')
+  const maxSize = 10 * 1024 * 1024
+  if (file.size > maxSize) throw new Error('Die Datei ist größer als 10 MB. Bitte wähle eine kleinere Datei.')
   let extractedText = ''
   let recognition: InvoiceExtraction['recognition'] = 'browser-ocr'
   let backend = 'Tesseract.js'

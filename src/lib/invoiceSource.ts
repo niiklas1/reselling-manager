@@ -1,5 +1,5 @@
 import PostalMime from 'postal-mime'
-import { parseInvoiceText, readInvoiceFile, type InvoiceExtraction } from './invoiceScanner'
+import { parseInvoiceText, readInvoiceFile, type InvoiceExtraction } from './invoiceScanner.ts'
 
 type Progress = (value: number, stage: string) => void
 

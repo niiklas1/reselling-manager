@@ -13,6 +13,25 @@ type CacheRecord = { expiresAt: number; value: CatalogItem[] }
 const CACHE_KEY = 'reselling-product-catalog-cache-v1'
 const CACHE_TTL = 30 * 24 * 60 * 60 * 1000
 const SEARCH_TTL = 24 * 60 * 60 * 1000
+const RATE_KEY = 'reselling-upcitemdb-rate-v1'
+const MIN_API_INTERVAL = 10_000
+const DAILY_SOFT_LIMIT = 90
+
+async function reserveFreeApiRequest(): Promise<boolean> {
+  try {
+    const today = new Date().toISOString().slice(0, 10)
+    const usage = JSON.parse(localStorage.getItem(RATE_KEY) || '{}') as { day?: string; count?: number; lastAt?: number }
+    const count = usage.day === today ? Number(usage.count || 0) : 0
+    if (count >= DAILY_SOFT_LIMIT) return false
+    const wait = Math.max(0, Number(usage.lastAt || 0) + MIN_API_INTERVAL - Date.now())
+    if (wait) await new Promise(resolve => setTimeout(resolve, wait))
+    localStorage.setItem(RATE_KEY, JSON.stringify({ day: today, count: count + 1, lastAt: Date.now() }))
+    return true
+  } catch {
+    // Storage can be unavailable in private browsing; still try one request.
+    return true
+  }
+}
 
 function readCache(key: string): CatalogItem[] | null {
   try {
@@ -91,9 +110,10 @@ export function productNameSimilarity(receiptName: string, catalogName: string):
 }
 
 async function requestCatalog(path: string): Promise<CatalogItem[]> {
+  if (!await reserveFreeApiRequest()) return []
   const response = await fetch(path, { headers: { Accept: 'application/json' } })
-  if (!response.ok && response.status !== 404) return []
   if (response.status === 404) return []
+  if (!response.ok) throw new Error('Product catalog request failed: ' + response.status)
   const data = await response.json() as CatalogResponse
   return Array.isArray(data.items)
     ? data.items.filter(item => typeof item.title === 'string' && item.title.trim())

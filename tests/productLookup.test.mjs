@@ -64,7 +64,47 @@ test('replaces noisy Ditto OCR with the exact barcode catalogue title', async ()
     }])
     assert.equal(result[0].description, '30 Jahre Ditto Premium-Kollektion DE')
     assert.equal(result[0].productVerified, true)
+    assert.equal(result[0].productVerification, 'barcode')
     assert.equal(result[0].confidence, 0.99)
+  } finally {
+    globalThis.fetch = originalFetch
+    if (originalStorage === undefined) delete globalThis.localStorage
+    else Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: originalStorage })
+  }
+})
+
+
+test('keeps fuzzy name catalogue matches unchecked for human confirmation', async () => {
+  const originalFetch = globalThis.fetch
+  const originalStorage = globalThis.localStorage
+  const values = new Map()
+  Object.defineProperty(globalThis, 'localStorage', {
+    configurable: true,
+    value: {
+      getItem: key => values.get(key) ?? null,
+      setItem: (key, value) => values.set(key, String(value)),
+    },
+  })
+  globalThis.fetch = async input => {
+    assert.match(String(input), /\/api\/product\/search\?q=/)
+    return new Response(JSON.stringify({
+      code: 'OK',
+      items: [{ title: 'Pokémon Ditto Premium Collection' }],
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+  }
+
+  try {
+    const result = await enrichInvoiceProductNames([{
+      id: 'line-2',
+      description: 'Ditto Premium Collection',
+      quantity: 1,
+      unitPrice: 39.99,
+      amount: 39.99,
+      confidence: 0.69,
+    }])
+    assert.equal(result[0].description, 'Pokémon Ditto Premium Collection')
+    assert.equal(result[0].productVerification, 'name')
+    assert.equal(result[0].confidence, 0.84)
   } finally {
     globalThis.fetch = originalFetch
     if (originalStorage === undefined) delete globalThis.localStorage

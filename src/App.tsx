@@ -3,7 +3,7 @@ import {
   ArrowDownToLine, ArrowUpRight, Bell, Box, ChartNoAxesCombined, ChevronDown,
   CircleHelp, LayoutDashboard, Menu, Package, Plus, Search, Settings,
   ShoppingBag, SlidersHorizontal, Sparkles, Wallet, X, Trash2, Pencil,
-  CalendarDays, Tag, Truck, CheckCircle2, LockKeyhole, LoaderCircle,
+  CalendarDays, Tag, Truck, CheckCircle2, LoaderCircle,
   Camera, FileText, FileUp, ImagePlus, Moon, Sun, ExternalLink, RefreshCw, HardDrive
 } from 'lucide-react'
 import { readInvoiceFile, type InvoiceLineItem } from './lib/invoiceScanner'

@@ -277,6 +277,8 @@ async function extractZipFromPdf(file: File): Promise<Uint8Array> {
 function pdfSafeText(value: string): string {
   return value.normalize('NFKD')
     .replace(/[\u0300-\u036f]/g, '')
+    .replace(/€/g, ' EUR ')
+    .replace(/£/g, ' GBP ')
     .replace(/[–—•·]/g, '-')
     .replace(/[^\x20-\x7E]/g, '?')
 }

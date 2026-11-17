@@ -19,7 +19,8 @@
     "pdfjs-dist": "6.5.438",
     "tesseract.js": "7.0.0",
     "@huggingface/transformers": "4.3.0",
-    "@cantoo/pdf-lib": "^2.11.1"
+    "@cantoo/pdf-lib": "^2.11.1",
+    "postal-mime": "^4.2.1"
   },
   "devDependencies": {
     "@types/react": "^18.3.18",

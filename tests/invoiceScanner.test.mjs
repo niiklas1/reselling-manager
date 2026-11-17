@@ -63,3 +63,30 @@ test('does not guess a product from a page containing only metadata and totals',
   assert.equal(result.name, '')
   assert.equal(result.amount, 39.99)
 })
+
+
+test('parses a Thalia thermal receipt and ignores SUMME, EC Cash and terminal metadata', () => {
+  const result = parseInvoiceText([
+    'Thalia Baunatal',
+    'Quittung',
+    'Art/EAN 196214147454',
+    'PKM 30 Jahre Ditto Premi 46,99 |',
+    'SUMME [1] EUR 46,99',
+    'EC Cash LS EUR 46,99',
+    'Kundenbeleg',
+    'Kartenzahlung',
+    'Referenzpar. 0000000000',
+    'Genehmigungs-Nr. 161834',
+    'AS-Zeit 17.11. 11:43 Uhr',
+    'Weitere Daten /0000000001//A000000359/3F',
+    'Betrag EUR 46,99',
+    'MWST BRUTTO NETTO 19% 7,50 46,99 39,49',
+    'TSE Transaktionsnummer 235609',
+  ].join('\\n'))
+
+  assert.equal(result.lineItems.length, 1)
+  assert.equal(result.lineItems[0].description, 'PKM 30 Jahre Ditto Premi')
+  assert.equal(result.lineItems[0].quantity, 1)
+  assert.equal(result.lineItems[0].amount, 46.99)
+  assert.equal(result.amount, 46.99)
+})

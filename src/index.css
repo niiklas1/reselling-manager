@@ -322,3 +322,18 @@ body{background:#f1eff8}
 
 .sale-action{display:inline-flex!important;align-items:center;gap:4px;white-space:nowrap;color:#7856dc!important;font-size:8px;font-weight:700}
 :root[data-theme="dark"] .sale-action{color:#d0adff!important}
+
+
+/* Profile, currency and receipt usability */
+.currency-select{min-width:135px;height:34px;border:1px solid #e5e0ee;border-radius:8px;background:#fff;color:#554b70;padding:0 10px;font-size:10px;font-weight:700}
+.receipt-inline{display:inline-flex;align-items:center;gap:4px;width:max-content;margin-top:4px;padding:3px 6px;border:1px solid #e6def6;border-radius:6px;background:#f8f5ff;color:#7656d8;font-size:8px;font-weight:700;cursor:pointer}
+.receipt-inline:hover{background:#eee8ff}
+.receipt-modal{width:min(900px,100%);height:min(820px,calc(100vh - 30px));display:flex;flex-direction:column}
+.receipt-frame{width:100%;flex:1;min-height:300px;border:0;background:#f2f2f4}
+.receipt-loading,.receipt-error{display:flex;align-items:center;justify-content:center;gap:9px;flex:1;min-height:180px;color:#7d8496;font-size:11px}
+.receipt-error{color:#b24f4a}
+.receipt-modal .modal-actions{padding:0 22px 18px}
+.receipt-download{display:inline-flex;align-items:center;gap:7px;text-decoration:none}
+:root[data-theme="dark"] .currency-select{background:#171b31;border-color:#393653;color:#e8e5f5}
+:root[data-theme="dark"] .receipt-inline{background:#29213f;border-color:#4a3a68;color:#d0adff}
+@media(max-width:600px){.currency-select{min-width:120px}.receipt-modal{height:calc(100vh - 20px)}.receipt-frame{min-height:240px}}

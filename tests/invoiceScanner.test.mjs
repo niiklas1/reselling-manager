@@ -90,3 +90,13 @@ test('parses a Thalia thermal receipt and ignores SUMME, EC Cash and terminal me
   assert.equal(result.lineItems[0].amount, 46.99)
   assert.equal(result.amount, 46.99)
 })
+
+
+test('normalizes literal OCR line-break escapes and strips stray symbols from product names', () => {
+  const result = parseInvoiceText('※★ Pokémon 30 Jahre Ditto Premium Collection ™ 46,99\\nSUMME 46,99\\nEC Cash 46,99')
+
+  assert.equal(result.lineItems.length, 1)
+  assert.equal(result.lineItems[0].description, 'Pokémon 30 Jahre Ditto Premium Collection')
+  assert.equal(result.lineItems[0].amount, 46.99)
+  assert.equal(result.amount, 46.99)
+})

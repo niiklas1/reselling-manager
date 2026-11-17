@@ -108,7 +108,7 @@ test('attaches a valid EAN from its labelled receipt row to the following produc
     'Art/EAN 196214147454',
     'PKM 30 Jahre Ditto Premi 46,99',
     'SUMME [1] EUR 46,99',
-  ].join('\\n'))
+  ].join('\n'))
 
   assert.equal(result.lineItems.length, 1)
   assert.equal(result.lineItems[0].barcode, '196214147454')
@@ -120,7 +120,7 @@ test('does not attach a barcode with an invalid check digit', () => {
     'Art/EAN 196214147455',
     'Pokémon Ditto Premium Collection 46,99',
     'SUMME 46,99',
-  ].join('\\n'))
+  ].join('\n'))
 
   assert.equal(result.lineItems.length, 1)
   assert.equal(result.lineItems[0].barcode, undefined)

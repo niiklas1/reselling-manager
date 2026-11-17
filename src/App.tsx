@@ -3,8 +3,10 @@ import {
   ArrowDownToLine, ArrowUpRight, Bell, Box, ChartNoAxesCombined, ChevronDown,
   CircleHelp, LayoutDashboard, Menu, Package, Plus, Search, Settings,
   ShoppingBag, SlidersHorizontal, Sparkles, Wallet, X, Trash2, Pencil,
-  CalendarDays, Tag, Truck, CheckCircle2
+  CalendarDays, Tag, Truck, CheckCircle2, LogOut, Mail, LockKeyhole, LoaderCircle
 } from 'lucide-react'
+import type { Session } from '@supabase/supabase-js'
+import { supabase } from './lib/supabase'
 
 type Status = 'Auf Lager' | 'Verkauft'
 type Product = {
@@ -27,19 +29,113 @@ const initialProducts: Product[] = []
 const money = (value: number) => new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'EUR' }).format(value)
 const profit = (p: Product) => p.salePrice - p.purchasePrice - p.shipping - p.fees
 
+function mapProductRow(row: any): Product {
+  return {
+    id: row.id,
+    name: row.name,
+    category: row.category || '',
+    platform: row.platform || '',
+    purchasePrice: Number(row.purchase_price || 0),
+    salePrice: Number(row.sale_price || 0),
+    shipping: Number(row.shipping || 0),
+    fees: Number(row.fees || 0),
+    purchaseDate: row.purchase_date || '',
+    saleDate: row.sale_date || '',
+    status: row.status as Status,
+  }
+}
+
 function App() {
   const [section, setSection] = useState<Section>('Übersicht')
-  const [products, setProducts] = useState<Product[]>(() => {
-    try { return JSON.parse(localStorage.getItem('reselling-products') || '[]') as Product[] }
-    catch { return initialProducts }
-  })
+  const [session, setSession] = useState<Session | null>(null)
+  const [authLoading, setAuthLoading] = useState(true)
+  const [productsLoading, setProductsLoading] = useState(false)
+  const [dataError, setDataError] = useState('')
+  const [products, setProducts] = useState<Product[]>([])
   const [search, setSearch] = useState('')
   const [filter, setFilter] = useState<'Alle' | Status>('Alle')
   const [showForm, setShowForm] = useState(false)
   const [editing, setEditing] = useState<Product | null>(null)
   const [mobileNav, setMobileNav] = useState(false)
 
-  useEffect(() => { localStorage.setItem('reselling-products', JSON.stringify(products)) }, [products])
+  useEffect(() => {
+    let mounted = true
+    supabase.auth.getSession().then(({ data, error }) => {
+      if (!mounted) return
+      if (error) setDataError(error.message)
+      setSession(data.session)
+      setAuthLoading(false)
+    })
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+      setSession(nextSession)
+      setAuthLoading(false)
+    })
+    return () => {
+      mounted = false
+      subscription.unsubscribe()
+    }
+  }, [])
+
+  useEffect(() => {
+    const userId = session?.user.id
+    if (!userId) {
+      setProducts([])
+      setProductsLoading(false)
+      return
+    }
+
+    let cancelled = false
+    const loadProducts = async () => {
+      setProductsLoading(true)
+      setDataError('')
+      const { data, error } = await supabase
+        .from('products')
+        .select('*')
+        .order('created_at', { ascending: false })
+
+      if (cancelled) return
+      if (error) {
+        setDataError(`Deine Produkte konnten nicht geladen werden: ${error.message}`)
+        setProductsLoading(false)
+        return
+      }
+
+      let rows = data || []
+      if (rows.length === 0) {
+        try {
+          const legacy = JSON.parse(localStorage.getItem('reselling-products') || '[]') as Product[]
+          if (Array.isArray(legacy) && legacy.length > 0 && window.confirm(`Du hast noch ${legacy.length} lokal gespeicherte Produkte aus der alten App. Möchtest du sie in diesen Account übernehmen?`)) {
+            const importRows = legacy.map((p) => ({
+              user_id: userId,
+              name: p.name,
+              category: p.category || '',
+              platform: p.platform || '',
+              purchase_price: Number(p.purchasePrice || 0),
+              sale_price: Number(p.salePrice || 0),
+              shipping: Number(p.shipping || 0),
+              fees: Number(p.fees || 0),
+              purchase_date: p.purchaseDate || null,
+              sale_date: p.saleDate || null,
+              status: p.status || 'Auf Lager',
+            }))
+            const { data: imported, error: importError } = await supabase.from('products').insert(importRows).select('*').order('created_at', { ascending: false })
+            if (importError) setDataError(`Die alten Produkte konnten nicht importiert werden: ${importError.message}`)
+            else rows = imported || []
+          }
+        } catch {
+          // Ignore invalid legacy browser data and keep the account's cloud inventory empty.
+        }
+      }
+
+      if (cancelled) return
+      setProducts(rows.map(mapProductRow))
+      setProductsLoading(false)
+    }
+
+    void loadProducts()
+    return () => { cancelled = true }
+  }, [session?.user.id])
+
 
   const sold = products.filter(p => p.status === 'Verkauft')
   const stock = products.filter(p => p.status === 'Auf Lager')
@@ -52,19 +148,59 @@ function App() {
     return matchesSearch && (filter === 'Alle' || p.status === filter)
   }), [products, search, filter])
 
-  function saveProduct(product: Product) {
+  async function saveProduct(product: Product) {
+    if (!session?.user.id) return
+    setDataError('')
+    const payload = {
+      user_id: session.user.id,
+      name: product.name,
+      category: product.category,
+      platform: product.platform,
+      purchase_price: product.purchasePrice,
+      sale_price: product.salePrice,
+      shipping: product.shipping,
+      fees: product.fees,
+      purchase_date: product.purchaseDate || null,
+      sale_date: product.saleDate || null,
+      status: product.status,
+    }
+    const result = editing
+      ? await supabase.from('products').update(payload).eq('id', product.id).select('*').single()
+      : await supabase.from('products').insert({ id: product.id, ...payload }).select('*').single()
+
+    if (result.error) {
+      setDataError(`Produkt konnte nicht gespeichert werden: ${result.error.message}`)
+      return
+    }
+    const saved = mapProductRow(result.data)
     setProducts(current => editing
-      ? current.map(p => p.id === product.id ? product : p)
-      : [product, ...current])
+      ? current.map(p => p.id === saved.id ? saved : p)
+      : [saved, ...current])
     setShowForm(false)
     setEditing(null)
   }
 
   function editProduct(product: Product) { setEditing(product); setShowForm(true) }
-  function deleteProduct(id: string) {
-    if (window.confirm('Möchtest du dieses Produkt wirklich löschen?')) setProducts(current => current.filter(p => p.id !== id))
+  async function deleteProduct(id: string) {
+    if (!window.confirm('Möchtest du dieses Produkt wirklich löschen?')) return
+    const { error } = await supabase.from('products').delete().eq('id', id)
+    if (error) {
+      setDataError(`Produkt konnte nicht gelöscht werden: ${error.message}`)
+      return
+    }
+    setProducts(current => current.filter(p => p.id !== id))
   }
   function openNew() { setEditing(null); setShowForm(true) }
+  async function signOut() {
+    const { error } = await supabase.auth.signOut()
+    if (error) setDataError(`Abmeldung fehlgeschlagen: ${error.message}`)
+  }
+
+
+  if (authLoading) {
+    return <div className="auth-loading"><LoaderCircle className="spin" size={24}/><span>Reselling Manager wird geladen …</span></div>
+  }
+  if (!session) return <AuthScreen />
 
   const navItems: { label: Section; icon: typeof LayoutDashboard }[] = [
     { label: 'Übersicht', icon: LayoutDashboard },
@@ -87,7 +223,7 @@ function App() {
         </nav>
         <div className="sidebar-spacer"/>
         <button className={section === 'Einstellungen' ? 'nav-link selected' : 'nav-link'} onClick={() => setSection('Einstellungen')}><Settings size={18}/><span>Einstellungen</span></button>
-        <div className="profile-card"><div className="profile-avatar">N</div><div className="profile-copy"><strong>Mein Workspace</strong><span>Persönlicher Account</span></div><ChevronDown size={15} className="profile-chevron"/></div>
+        <div className="profile-card"><div className="profile-avatar">N</div><div className="profile-copy"><strong>Mein Workspace</strong><span>{session.user.email}</span></div><ChevronDown size={15} className="profile-chevron"/></div>
         <div className="sidebar-foot">RESSELLMANAGER <span>·</span> V 0.1</div>
       </aside>
 
@@ -97,10 +233,12 @@ function App() {
         <header className="topbar">
           <button className="mobile-menu" onClick={() => setMobileNav(true)}><Menu size={20}/></button>
           <div className="breadcrumbs"><span>Workspace</span><b>/</b><strong>{section}</strong></div>
-          <div className="topbar-right"><span className="local-status"><i/> Lokal gespeichert</span><button className="top-icon" aria-label="Hilfe"><CircleHelp size={18}/></button><div className="top-avatar">N</div></div>
+          <div className="topbar-right"><span className="local-status"><i/> Cloud synchronisiert</span><span className="account-email">{session.user.email}</span><button className="signout-button" onClick={signOut}><LogOut size={14}/><span>Abmelden</span></button></div>
         </header>
 
         <div className="page-wrap">
+          {dataError && <div className="app-alert error" role="alert">{dataError}</div>}
+          {productsLoading && <div className="app-alert">Deine Cloud-Daten werden geladen …</div>}
           {section === 'Übersicht' && (
             <>
               <div className="page-header"><div><div className="overline">DEIN BUSINESS AUF EINEN BLICK</div><h1>Übersicht</h1><p>Willkommen zurück. Hier ist dein aktueller Überblick.</p></div><button className="button-primary" onClick={openNew}><Plus size={17}/> Produkt hinzufügen</button></div>
@@ -142,13 +280,111 @@ function App() {
           )}
 
           {section === 'Auswertungen' && <section className="panel coming-panel"><div className="coming-icon"><Sparkles size={23}/></div><h2>Auswertungen</h2><p>Hier bauen wir deine Monatsübersichten, Gewinnentwicklung und Plattformvergleiche auf.</p><span className="coming-tag">WIRD ALS NÄCHSTES ERWEITERT</span></section>}
-          {section === 'Einstellungen' && <section className="panel settings-panel"><div className="panel-title-row"><div><h2>Einstellungen</h2><p>Grundlegende Informationen zu deiner App.</p></div></div><div className="setting-row"><div><strong>Datenspeicherung</strong><span>Aktuell werden deine Daten lokal in diesem Browser gespeichert.</span></div><span className="setting-pill">Lokal</span></div><div className="setting-row"><div><strong>Währung</strong><span>Alle Beträge werden in Euro angezeigt.</span></div><span className="setting-pill">EUR (€)</span></div><div className="setting-row"><div><strong>App-Version</strong><span>Grundversion deines Reselling Managers.</span></div><span className="setting-pill">0.1.0</span></div></section>}
+          {section === 'Einstellungen' && <section className="panel settings-panel"><div className="panel-title-row"><div><h2>Einstellungen</h2><p>Grundlegende Informationen zu deiner App.</p></div></div><div className="setting-row"><div><strong>Datenspeicherung</strong><span>Deine Produkte werden sicher in deinem Supabase-Account gespeichert und mit deinen Geräten synchronisiert.</span></div><span className="setting-pill">Cloud</span></div>
+          <div className="setting-row"><div><strong>Angemeldet als</strong><span>{session.user.email}</span></div><span className="setting-pill">Persönlich</span></div><div className="setting-row"><div><strong>Währung</strong><span>Alle Beträge werden in Euro angezeigt.</span></div><span className="setting-pill">EUR (€)</span></div><div className="setting-row"><div><strong>App-Version</strong><span>Grundversion deines Reselling Managers.</span></div><span className="setting-pill">0.1.0</span></div></section>}
           <footer className="page-footer">Reselling Manager <span>·</span> Einfach den Überblick behalten.</footer>
         </div>
       </main>
 
       {showForm && <ProductModal product={editing} onClose={() => {setShowForm(false);setEditing(null)}} onSave={saveProduct}/>}
     </div>
+  )
+}
+
+
+function AuthScreen() {
+  const [mode, setMode] = useState<'login' | 'signup' | 'reset'>('login')
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
+  const [confirmPassword, setConfirmPassword] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [message, setMessage] = useState('')
+  const [error, setError] = useState('')
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault()
+    setError('')
+    setMessage('')
+    const normalizedEmail = email.trim().toLowerCase()
+    if (!normalizedEmail) {
+      setError('Bitte gib deine E-Mail-Adresse ein.')
+      return
+    }
+    if (mode !== 'reset' && password.length < 8) {
+      setError('Dein Passwort muss mindestens 8 Zeichen lang sein.')
+      return
+    }
+    if (mode === 'signup' && password !== confirmPassword) {
+      setError('Die beiden Passwörter stimmen nicht überein.')
+      return
+    }
+
+    setBusy(true)
+    try {
+      if (mode === 'login') {
+        const { error: authError } = await supabase.auth.signInWithPassword({ email: normalizedEmail, password })
+        if (authError) throw authError
+      } else if (mode === 'signup') {
+        const { data, error: authError } = await supabase.auth.signUp({
+          email: normalizedEmail,
+          password,
+          options: { emailRedirectTo: window.location.origin },
+        })
+        if (authError) throw authError
+        if (data.session) {
+          setMessage('Dein Account wurde erstellt. Du bist jetzt angemeldet.')
+        } else {
+          setMessage('Fast geschafft! Bitte bestätige deine E-Mail-Adresse über den Link in deinem Posteingang. Danach kannst du dich anmelden.')
+        }
+        setMode('login')
+        setPassword('')
+        setConfirmPassword('')
+      } else {
+        const { error: authError } = await supabase.auth.resetPasswordForEmail(normalizedEmail, {
+          redirectTo: window.location.origin,
+        })
+        if (authError) throw authError
+        setMessage('Wenn ein Account zu dieser Adresse existiert, erhältst du eine E-Mail zum Zurücksetzen des Passworts.')
+        setMode('login')
+      }
+    } catch (err) {
+      const text = err instanceof Error ? err.message : 'Es ist ein unbekannter Fehler aufgetreten.'
+      setError(text)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const isSignup = mode === 'signup'
+  const isReset = mode === 'reset'
+
+  return (
+    <main className="auth-screen">
+      <section className="auth-card">
+        <div className="auth-brand"><div className="brand-symbol">r.</div><span>resell<span className="brand-muted">manager</span></span></div>
+        <div className="auth-heading">
+          <div className="overline">{isSignup ? 'NEU HIER?' : isReset ? 'ACCOUNT WIEDERHERSTELLEN' : 'WILLKOMMEN ZURÜCK'}</div>
+          <h1>{isSignup ? 'Account erstellen' : isReset ? 'Passwort zurücksetzen' : 'Anmelden'}</h1>
+          <p>{isSignup ? 'Erstelle deinen persönlichen Reselling-Workspace.' : isReset ? 'Wir senden dir einen Link zum Zurücksetzen.' : 'Melde dich an, um deine Produkte und Verkäufe zu verwalten.'}</p>
+        </div>
+        {message && <div className="auth-message success" role="status">{message}</div>}
+        {error && <div className="auth-message error" role="alert">{error}</div>}
+        <form className="auth-form" onSubmit={submit}>
+          <label className="field"><span>E-Mail-Adresse</span><div className="auth-input-wrap"><Mail size={16}/><input type="email" required autoComplete="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="name@beispiel.de"/></div></label>
+          {!isReset && <label className="field"><span>Passwort</span><div className="auth-input-wrap"><LockKeyhole size={16}/><input type="password" required minLength={8} autoComplete={isSignup ? 'new-password' : 'current-password'} value={password} onChange={e => setPassword(e.target.value)} placeholder="Mindestens 8 Zeichen"/></div></label>}
+          {isSignup && <label className="field"><span>Passwort wiederholen</span><div className="auth-input-wrap"><LockKeyhole size={16}/><input type="password" required minLength={8} autoComplete="new-password" value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)} placeholder="Passwort wiederholen"/></div></label>}
+          <button className="button-primary auth-submit" type="submit" disabled={busy}>
+            {busy ? <LoaderCircle className="spin" size={16}/> : null}
+            {busy ? 'Bitte warten …' : isSignup ? 'Account erstellen' : isReset ? 'Reset-Link senden' : 'Anmelden'}
+          </button>
+        </form>
+        <div className="auth-links">
+          {mode === 'login' && <><button onClick={() => {setMode('signup');setError('');setMessage('')}}>Neuen Account erstellen</button><button onClick={() => {setMode('reset');setError('');setMessage('')}}>Passwort vergessen?</button></>}
+          {mode !== 'login' && <button onClick={() => {setMode('login');setError('');setMessage('')}}>Zurück zur Anmeldung</button>}
+        </div>
+        <div className="auth-security"><LockKeyhole size={13}/> Jeder Account kann ausschließlich seine eigenen Produkte sehen.</div>
+      </section>
+    </main>
   )
 }
 

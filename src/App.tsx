@@ -776,7 +776,7 @@ function App() {
               <div className="dashboard-grid">
                 <section className="panel performance-panel">
                   <div className="panel-title-row"><div><h2>Deine Performance</h2><p>Umsatz und Gewinn aus deinen Verkäufen</p></div><span className="range-label">GESAMTZEITRAUM</span></div>
-                  {sold.length === 0 ? <EmptyState icon={<ChartNoAxesCombined size={22}/>} title="Noch keine Verkaufsdaten" text="Sobald du ein Produkt als verkauft markierst, erscheinen hier deine Kennzahlen."/> : <div className="performance-numbers"><div><span>Umsatz</span><strong>{money(revenue)}</strong></div><div><span>Gewinn</span><strong className={totalProfit >= 0 ? 'positive' : 'negative'}>{money(totalProfit)}</strong></div><div><span>Ø Gewinn / Verkauf</span><strong>{money(totalProfit / sold.length)}</strong></div></div>}
+                  {sold.length === 0 ? <EmptyState icon={<ChartNoAxesCombined size={22}/>} title="Noch keine Verkaufsdaten" text="Jedes einzelne Exemplar kann separat verkauft werden. Die Übersicht zeigt deine gesamten Kennzahlen."/> : <div className="performance-numbers"><div><span>Umsatz</span><strong>{money(revenue)}</strong></div><div><span>Gewinn</span><strong className={totalProfit >= 0 ? 'positive' : 'negative'}>{money(totalProfit)}</strong></div><div><span>Ø Gewinn / Verkauf</span><strong>{money(totalProfit / sold.length)}</strong></div></div>}
                   <div className="panel-divider"/><div className="mini-legend"><span><i className="legend-blue"/> Umsatz</span><span><i className="legend-violet"/> Gewinn</span></div>
                 </section>
                 <section className="panel quick-panel"><div className="panel-title-row"><div><h2>Schnellübersicht</h2><p>Deine offenen Bestände</p></div><Box size={18} className="muted-icon"/></div><div className="quick-row"><span>Stück auf Lager</span><strong>{stockUnits}</strong></div><div className="quick-row"><span>Verkaufte Produkte</span><strong>{sold.length}</strong></div><div className="quick-row"><span>Investiertes Kapital</span><strong>{money(investment)}</strong></div><button className="subtle-button" onClick={() => setSection('Produkte')}>Bestand ansehen <ArrowUpRight size={15}/></button></section>
@@ -845,7 +845,7 @@ function ProductTable({ products, onEdit, onDelete, onSell, onReceipt }: { produ
   }
 
   function renderUnitRow(product: Product, key: string, label?: string) {
-    return <tr key={product.id} className={label ? 'product-unit-row' : undefined}>
+    return <tr key={product.id} data-group-key={key} className={label ? 'product-unit-row' : undefined}>
       <td><div className={label ? 'product-name product-unit-name' : 'product-name'}>
         <div className="product-thumb">{product.imageUrl ? <img src={product.imageUrl} alt={product.name}/> : <Tag size={16}/>}</div>
         <div><strong>{product.name}</strong><span>{label ? label + ' · ' + (product.category || 'Ohne Kategorie') : (product.category || 'Ohne Kategorie')}</span>
@@ -1219,7 +1219,7 @@ function ProductModal({ product, onClose, onSave }: {
       {scanError && <div className="inline-error">{scanError}</div>}
     </div>
     {showForm && <form onSubmit={submit}><div className="form-grid">
-      {invoiceLines.length > 1 ? <div className="invoice-lines-panel full">
+      {invoiceLines.length > 0 ? <div className="invoice-lines-panel full">
         <div className="invoice-lines-heading"><div><strong>{invoiceLines.length} erkannte Positionen</strong><small>Sichere Positionen sind vorausgewählt. Unsichere Erkennungen musst du aktiv auswählen. Prüfe Namen, Stückzahl und Gesamtpreis je Position.</small></div><span>{selectedLines.length} ausgewählt</span></div>
         {invoiceLines.map(line => <div className="invoice-line-card" key={line.id}>
           <div className="invoice-line-top"><input type="checkbox" checked={line.selected} onChange={e => updateInvoiceLine(line.id,{selected:e.target.checked})}/><input className="invoice-line-name" value={line.description} onChange={e => updateInvoiceLine(line.id,{description:e.target.value})} aria-label="Artikelname"/><span className={line.confidence >= 0.72 ? 'invoice-confidence good' : 'invoice-confidence review'}>{line.confidence >= 0.72 ? 'Sicher' : 'Bitte prüfen'} · {Math.round(line.confidence * 100)}%</span></div>
@@ -1266,7 +1266,7 @@ function HelpModal({ onClose }: { onClose: () => void }) {
   return <div className="modal-backdrop help-backdrop" onMouseDown={e => { if (e.target === e.currentTarget) onClose() }}><section className="modal-card help-card">
     <div className="modal-header"><div><span className="overline">RESSELLMANAGER GUIDE</span><h2>Wie können wir helfen?</h2><p>Die wichtigsten Funktionen auf einen Blick.</p></div><button className="modal-close" onClick={onClose}><X size={19}/></button></div>
     <div className="help-content">
-      <div className="help-item"><span><FileUp size={18}/></span><div><strong>Rechnung intelligent erfassen</strong><p>Die lokale Florence-2-KI liest Text und Tabellenpositionen im Browser aus. Mehrere Artikel können einzeln geprüft und gemeinsam als Produkte gespeichert werden. Falls die KI auf dem Gerät nicht läuft, springt die normale Browser-Texterkennung ein. Beim ersten Einsatz wird das KI-Modell einmalig aus dem Internet geladen (mehrere hundert MB).</p></div></div>
+      <div className="help-item"><span><FileUp size={18}/></span><div><strong>Rechnung intelligent erfassen</strong><p>Die lokale Florence-2-KI liest Text und Tabellenpositionen im Browser aus. Positionen werden anhand von Tabellenstruktur und Summen geprüft. Unsichere Treffer musst du vor dem Speichern auswählen. Falls die KI auf dem Gerät nicht läuft, springt die normale Browser-Texterkennung ein. Beim ersten Einsatz wird das KI-Modell einmalig aus dem Internet geladen (mehrere hundert MB).</p></div></div>
       <div className="help-item"><span><ImagePlus size={18}/></span><div><strong>Produktbilder</strong><p>Nach der Rechnungserkennung wird automatisch das bestplatzierte kommerziell nutzbare Bild von Openverse ausgewählt. Über „Bild ändern“ kannst du andere Bilder ansehen. Google Bilder öffnet eine separate Suche; deren erstes Ergebnis kann die App nicht automatisch auslesen.</p></div></div>
       <div className="help-item"><span><Moon size={18}/></span><div><strong>Dark Mode</strong><p>Über das Mond-/Sonnensymbol oben kannst du jederzeit zwischen dunklem und hellem Erscheinungsbild wechseln.</p></div></div>
       <div className="help-item"><span><HardDrive size={18}/></span><div><strong>Lokale Daten</strong><p>Produkte und Originalbelege bleiben im Speicher dieses Browsers auf diesem Gerät. Es gibt keine Anmeldung, keine Cloud-Synchronisierung und keine automatische Sicherung. Für die Bildsuche wird nur der erkannte Produktname an Openverse übermittelt.</p></div></div>

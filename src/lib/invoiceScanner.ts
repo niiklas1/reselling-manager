@@ -7,6 +7,8 @@ export type InvoiceLineItem = {
   unitPrice: number | null
   amount: number
   confidence: number
+  barcode?: string
+  productVerified?: boolean
 }
 
 export type InvoiceExtraction = {
@@ -113,6 +115,38 @@ const SUMMARY_START = /\b(zwischensumme|warenwert|summe(?:\s+artikel)?|artikel\s
 const EXCLUDED_ROW = /\b(gesamtbetrag|rechnungsbetrag|endbetrag|endsumme|zu\s+zahlen|zahlbetrag|zwischensumme|warenwert|subtotal|summe|total|brutto|netto|mwst|ust\.?|mehrwertsteuer|umsatzsteuer|steuerbetrag|rückgeld|gegeben|kartenzahlung|barzahlung|ec[- ]?karte|ec\s+cash|girocard|contactless|kreditkarte|visa|mastercard|paypal|zahlung|bezahlt|gutschein|rabatt|versandkosten|lieferkosten|porto|pfand|kaution|anzahlung|gebühr|gebuehr|transaktionsnummer|autorisierung|terminal|kasse|kassen?nummer|kassen[- ]?nr|bonnummer|belegnummer|quittungsnummer|rechnungsnummer|kundennummer|bestellnummer|auftragsnummer|lieferant|rechnung|quittung|kassenbon|datum|uhrzeit|telefon|tel\.?|fax|email|e-mail|www\.|https?:|iban|bic|filiale|straße|str\.?|plz|adresse|kontakt|kundendienst|öffnungszeiten|oeffnungszeiten|artikelnummer|art\.?\s*nr|sku|ean|gtin|barcode|referenz|reference|transaction\s*(?:id|no|number)|tracking\s*(?:id|no|number)|customer\s*(?:id|no|number)|shipping|delivery|freight|order\s*(?:no|number)|invoice\s*(?:no|number)|page\s+\d|seite\s+\d)\b/i
 const TABLE_HEADER_WORDS = /\b(artikel|produkt|beschreibung|bezeichnung|item|description|menge|quantity|qty|anzahl|stück|stk|einzelpreis|stückpreis|unit\s*price|preis|price|betrag|amount|gesamtpreis|line\s*total)\b/i
 
+/** Validate EAN-8, UPC-A, EAN-13 and GTIN-14 check digits. */
+export function isValidBarcode(value: string): boolean {
+  const digits = value.replace(/\D/g, '')
+  if (![8, 12, 13, 14].includes(digits.length)) return false
+  const body = digits.slice(0, -1)
+  let sum = 0
+  let weight = 3
+  for (let index = body.length - 1; index >= 0; index--) {
+    sum += Number(body[index]) * weight
+    weight = weight === 3 ? 1 : 3
+  }
+  return (10 - (sum % 10)) % 10 === Number(digits.at(-1))
+}
+
+function extractBarcodeFromLine(line: string): string | undefined {
+  // Only interpret a number as a barcode when the receipt labels it as EAN/GTIN/UPC.
+  const match = line.match(/\b(?:art(?:ikel)?\s*\/\s*(?:ean|gtin)|ean|gtin|upc|barcode|art(?:ikel)?\s*nr\.?)\b[\s:#-]*((?:[\dOQDIl|!SB][\s-]?){8,18})/i)
+  if (!match) return undefined
+  const digits = match[1]
+    .replace(/[OQD]/gi, '0')
+    .replace(/[Il|!]/g, '1')
+    .replace(/S/g, '5')
+    .replace(/B/g, '8')
+    .replace(/\D/g, '')
+  return isValidBarcode(digits) ? digits : undefined
+}
+
+function removeBarcodeFromLine(line: string): string {
+  return line.replace(/\b(?:art(?:ikel)?\s*\/\s*(?:ean|gtin)|ean|gtin|upc|barcode|art(?:ikel)?\s*nr\.?)\b[\s:#-]*(?:[\dOQDIl|!SB][\s-]?){8,18}/ig, ' ')
+}
+
+
 function detectTableHeader(lines: string[]): number {
   for (let index = 0; index < lines.length; index++) {
     const line = lines[index]
@@ -138,8 +172,9 @@ function extractDescription(line: string, prices: MoneyToken[]): string {
     .replace(/^\s*(?:pos\.?\s*)?\d{1,3}[.)#:-]?\s+/i, '')
     .replace(/\b(?:qty|quantity|menge|anzahl)\s*[:=]?\s*\d{1,4}\b/ig, ' ')
     .replace(/\b\d{1,4}\s*(?:x|×|stk\.?|stück|pcs?\.?|st\.?)\b/ig, ' ')
-    .replace(/\b(?:ean|gtin|sku|artikelnummer|art\.?\s*nr)\s*[:#-]?\s*[A-Z0-9-]{5,}\b/ig, ' ')
+    .replace(/\b(?:art(?:ikel)?\s*\/\s*(?:ean|gtin)|ean|gtin|upc|sku|artikelnummer|art\.?\s*nr)\s*[:#-]?\s*[A-Z0-9-]{5,}\b/ig, ' ')
     .replace(/[|:;–-]+$/g, '')
+    .replace(/^[\s/:;|]+|[\s/:;|]+$/g, '')
     // Strip OCR artefacts such as stars, bullets and replacement symbols while
     // preserving meaningful product-name punctuation and accented characters.
     .replace(/[^\p{L}\p{N}\s&'’/().,+-]/gu, ' ')
@@ -147,7 +182,14 @@ function extractDescription(line: string, prices: MoneyToken[]): string {
     .trim()
 }
 
-function candidateConfidence(line: string, description: string, quantity: number, prices: MoneyToken[], hasHeader: boolean): number {
+function candidateConfidence(
+  line: string,
+  description: string,
+  quantity: number,
+  prices: MoneyToken[],
+  hasHeader: boolean,
+  hasBarcode: boolean,
+): number {
   const words = description.match(/[A-Za-zÄÖÜäöüß]{2,}/g) || []
   const letters = (description.match(/[A-Za-zÄÖÜäöüß]/g) || []).length
   const digits = (description.match(/\d/g) || []).length
@@ -155,15 +197,17 @@ function candidateConfidence(line: string, description: string, quantity: number
   const hasQuantityMarker = quantity > 1 || /\b(?:qty|quantity|menge|anzahl|\d+\s*(?:x|×|stk\.?|stück|pcs?))\b/i.test(line)
   const hasTwoPrices = prices.length >= 2
   const longestWord = Math.max(0, ...words.map(word => word.length))
-  let score = 0.36
-  if (words.length >= 2) score += 0.15
-  else if (longestWord >= 6) score += 0.13
+  let score = 0.34
+  if (words.length >= 2) score += 0.16
+  else if (longestWord >= 6) score += 0.14
   if (currencyMarker) score += 0.10
-  if (hasQuantityMarker) score += 0.12
-  if (hasTwoPrices) score += 0.11
+  if (hasQuantityMarker) score += 0.10
+  if (hasTwoPrices) score += 0.10
   if (hasHeader) score += 0.10
+  if (hasBarcode) score += 0.14
   if (description.length >= 12 && letters >= 8) score += 0.05
   if (digits > 0 && digits > letters * 0.8) score -= 0.22
+  if (/[※★◆�]/u.test(line)) score -= 0.06
   if (line.length > 140) score -= 0.12
   return Math.max(0, Math.min(0.99, score))
 }
@@ -218,9 +262,14 @@ function parseLineItems(lines: string[]): InvoiceLineItem[] {
   const endIndex = summaryIndex >= 0 ? summaryIndex : lines.length
   const rows = lines.slice(startIndex, endIndex)
   const result: InvoiceLineItem[] = []
+  let pendingBarcode: string | undefined
 
-  for (const line of rows) {
-    if (!line || EXCLUDED_ROW.test(line)) continue
+  for (const originalLine of rows) {
+    if (!originalLine) continue
+    const lineBarcode = extractBarcodeFromLine(originalLine)
+    if (lineBarcode) pendingBarcode = lineBarcode
+    const line = lineBarcode ? removeBarcodeFromLine(originalLine) : originalLine
+    if (!line.trim() || EXCLUDED_ROW.test(line)) continue
     if (/https?:\/\/|www\.|@|\b(?:iban|bic|swift)\b/i.test(line)) continue
     const prices = parseMoneyMatches(line)
     if (!prices.length) continue
@@ -237,7 +286,8 @@ function parseLineItems(lines: string[]): InvoiceLineItem[] {
     if (/^(?:pos(?:ition)?|art(?:ikel)?(?:-?nr)?|sku|ean|barcode|nr\.?|id|ref)\b/i.test(description)) continue
     if (/^[A-Z0-9/_-]{2,24}$/i.test(description) && !/\s/.test(description)) continue
 
-    const confidence = candidateConfidence(line, description, quantity, prices, headerIndex >= 0)
+    const barcode = lineBarcode || pendingBarcode
+    const confidence = candidateConfidence(line, description, quantity, prices, headerIndex >= 0, Boolean(barcode))
     const hasProductLikeDescription = words.length >= 2 || Math.max(...words.map(word => word.length)) >= 6
     if (!hasProductLikeDescription || confidence < 0.55) continue
 
@@ -255,15 +305,16 @@ function parseLineItems(lines: string[]): InvoiceLineItem[] {
       unitPrice: Number(unitPrice.toFixed(2)),
       amount,
       confidence: Number(confidence.toFixed(2)),
+      ...(barcode ? { barcode } : {}),
     })
+    pendingBarcode = undefined
   }
 
-  const subtotal = findSummaryAmount(lines, /\b(zwischensumme|warenwert|summe\s+artikel|artikel\s*summe|subtotal)\b/i)
+  const subtotal = findSummaryAmount(lines, /\\b(zwischensumme|warenwert|summe\\s+artikel|artikel\\s*summe|subtotal)\\b/i)
   if (subtotal !== null) return selectCandidatesAgainstSubtotal(result, subtotal)
-  const grandTotal = findSummaryAmount(lines, /\b(gesamtbetrag|rechnungsbetrag|endbetrag|endsumme|zu\s+zahlen|zahlbetrag|invoice\s+total|amount\s+due)\b/i)
+  const grandTotal = findSummaryAmount(lines, /\\b(gesamtbetrag|rechnungsbetrag|endbetrag|endsumme|zu\\s+zahlen|zahlbetrag|invoice\\s+total|amount\\s+due)\\b/i)
   return grandTotal !== null ? selectCandidatesAgainstSubtotal(result, grandTotal) : result
 }
-
 function parseTotal(text: string): number | null {
   const lines = text.split('\n').map(line => line.trim()).filter(Boolean)
   const priority = /\b(gesamtbetrag|rechnungsbetrag|endbetrag|endsumme|zu\s+zahlen|zahlbetrag|invoice\s+total|amount\s+due|total\s+amount)\b/i
@@ -325,14 +376,34 @@ async function canvasToBlob(canvas: HTMLCanvasElement): Promise<Blob> {
   })
 }
 
+function recognitionQuality(text: string): number {
+  const lines = text.split(/\r?\n/).map(line => line.trim()).filter(Boolean)
+  const items = parseLineItems(lines)
+  if (!items.length) return 0
+  const average = items.reduce((sum, item) => sum + item.confidence, 0) / items.length
+  const hasHeader = detectTableHeader(lines) >= 0
+  const hasSummary = lines.some(line => SUMMARY_START.test(line))
+  const hasBarcode = lines.some(line => Boolean(extractBarcodeFromLine(line)))
+  const hasReadableName = items.some(item => item.description.length >= 10 && /[A-Za-zÄÖÜäöüß]{3,}/.test(item.description))
+  return Math.min(0.99, average + (hasHeader ? 0.07 : 0) + (hasSummary ? 0.04 : 0) + (hasBarcode ? 0.08 : 0) + (hasReadableName ? 0.02 : 0))
+}
+
+function nameAgreement(left: string, right: string): number {
+  const normalize = (value: string) => value.toLocaleLowerCase('de-DE')
+    .normalize('NFKD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, ' ').trim().split(/\s+/).filter(word => word.length > 2)
+  const a = normalize(left)
+  const b = normalize(right)
+  if (!a.length || !b.length) return 0
+  const shared = a.filter(word => b.some(other => other === word || other.startsWith(word) || word.startsWith(other)))
+  return shared.length / Math.max(a.length, b.length)
+}
+
 async function recognizeWithBestEngine(
   image: Blob,
   onProgress: (value: number, stage: string) => void,
 ): Promise<{ text: string; recognition: 'local-ai' | 'browser-ocr'; backend: string }> {
-  // Tesseract is deliberately tried first: on narrow thermal receipts it often
-  // preserves the printed item row and the SUMME/payment boundary better than
-  // region-generating vision models. Previously any non-empty Florence output
-  // won, even when it consisted mostly of misread payment-terminal metadata.
+  let tesseractText = ''
   let tesseractError: unknown
   const objectUrl = URL.createObjectURL(image)
   try {
@@ -351,29 +422,59 @@ async function recognizeWithBestEngine(
     context.imageSmoothingQuality = 'high'
     context.drawImage(img, 0, 0, canvas.width, canvas.height)
     onProgress(0.12, 'Kassenbon und Tabellen werden gelesen')
-    const text = await recognizeCanvas(canvas, value => onProgress(0.12 + value * 0.68, 'Texterkennung läuft'))
-    if (text.trim() && parseLineItems(text.split(/\r?\n/).map(line => line.trim()).filter(Boolean)).length > 0) {
-      return { text, recognition: 'browser-ocr', backend: 'Tesseract.js (Belegprüfung)' }
-    }
-    tesseractError = new Error('Die erste Texterkennung fand keine plausible Artikelposition.')
+    tesseractText = await recognizeCanvas(canvas, value => onProgress(0.12 + value * 0.48, 'Texterkennung läuft'))
+    if (!tesseractText.trim()) tesseractError = new Error('Die Texterkennung fand keinen lesbaren Text.')
   } catch (error) {
     tesseractError = error
   } finally {
     URL.revokeObjectURL(objectUrl)
   }
 
-  onProgress(0.84, 'Zweite Erkennung mit lokaler KI')
+  const tesseractScore = tesseractText ? recognitionQuality(tesseractText) : 0
+  // Start the independent Florence model for weak/ambiguous OCR only.
+  // A strong table + valid barcode result avoids a second large model download.
+  if (tesseractScore >= 0.82) {
+    return { text: tesseractText, recognition: 'browser-ocr', backend: 'Tesseract.js (Layout- und Belegprüfung)' }
+  }
+
+  onProgress(0.64, 'Zweite unabhängige Erkennung mit lokaler KI')
   try {
-    const result: FlorenceOcrResult = await recognizeInvoiceWithAI(image, onProgress)
-    const text = positionedLines(result.labels, result.boxes).join('\n')
-    if (!text.trim()) throw new Error('Die lokale KI hat keinen lesbaren Text erkannt.')
-    return { text, recognition: 'local-ai', backend: result.backend }
+    const result: FlorenceOcrResult = await recognizeInvoiceWithAI(image, (fraction, stage) =>
+      onProgress(0.64 + fraction * 0.34, stage)
+    )
+    let florenceText = positionedLines(result.labels, result.boxes).join('\n')
+    const florenceScore = recognitionQuality(florenceText)
+    if (florenceScore <= 0 && tesseractScore > 0) {
+      return { text: tesseractText, recognition: 'browser-ocr', backend: 'Tesseract.js (Fallback nach KI-Gegenprüfung)' }
+    }
+    if (tesseractScore > 0 && florenceScore > 0) {
+      const tesseractItems = parseLineItems(tesseractText.split(/\r?\n/))
+      const florenceItems = parseLineItems(florenceText.split(/\r?\n/))
+      const agreement = nameAgreement(tesseractItems[0]?.description || '', florenceItems[0]?.description || '')
+      const winnerIsTesseract = tesseractScore >= florenceScore - 0.03
+      if (agreement < 0.34 && Math.abs(tesseractScore - florenceScore) < 0.12) {
+        // Conflicting recognizers must produce a review warning, not false certainty.
+        if (winnerIsTesseract && tesseractItems[0]) {
+          tesseractText = tesseractText.replace(tesseractItems[0].description, '※' + tesseractItems[0].description)
+        } else if (florenceItems[0]) {
+          florenceText = florenceText.replace(florenceItems[0].description, '※' + florenceItems[0].description)
+        }
+      }
+      return winnerIsTesseract
+        ? { text: tesseractText, recognition: 'browser-ocr', backend: 'Tesseract.js (mit Florence-Gegenprüfung)' }
+        : { text: florenceText, recognition: 'local-ai', backend: result.backend + ' (mit Tesseract-Gegenprüfung)' }
+    }
+    if (florenceScore > 0) return { text: florenceText, recognition: 'local-ai', backend: result.backend }
+    if (tesseractScore > 0) return { text: tesseractText, recognition: 'browser-ocr', backend: 'Tesseract.js (Fallback)' }
+    throw new Error('Beide Texterkennungen konnten keine plausible Artikelposition lesen.')
   } catch (aiError) {
-    if (tesseractError instanceof Error) throw new Error(tesseractError.message + ' ' + (aiError instanceof Error ? aiError.message : ''))
-    throw aiError
+    if (tesseractScore > 0) {
+      return { text: tesseractText, recognition: 'browser-ocr', backend: 'Tesseract.js (lokale KI nicht verfügbar)' }
+    }
+    const detail = aiError instanceof Error ? aiError.message : String(aiError)
+    throw new Error((tesseractError instanceof Error ? tesseractError.message + ' ' : '') + detail)
   }
 }
-
 export async function readInvoiceFile(
   file: File,
   onProgress: (value: number, stage: string) => void,

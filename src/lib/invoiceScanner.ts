@@ -9,6 +9,7 @@ export type InvoiceLineItem = {
   confidence: number
   barcode?: string
   productVerified?: boolean
+  productVerification?: 'barcode' | 'name'
 }
 
 export type InvoiceExtraction = {

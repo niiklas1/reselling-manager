@@ -303,3 +303,19 @@ body{background:#f1eff8}
 :root[data-theme="dark"] .backup-heading span,:root[data-theme="dark"] .backup-section>small{color:#a1a8c0}
 :root[data-theme="dark"] .backup-message{background:#2a2446;color:#d7c4ff}
 @media(max-width:600px){.backup-actions{flex-direction:column}.backup-actions button{justify-content:center}}
+
+
+/* Separate inventory and sale entry */
+.form-note{display:flex;align-items:center;gap:8px;padding:11px 12px;background:#f5f3fb;border:1px solid #e9e3f7;border-radius:8px;color:#7560a4;font-size:9px;line-height:1.5}
+.form-note svg{flex-shrink:0}
+.row-actions button:first-child{color:#7856dc}
+.sale-modal{width:min(500px,100%);padding:0}
+.sale-modal .sale-form-grid{padding:19px 25px 4px}
+.sale-modal .modal-actions{padding:0 25px 22px;margin-top:15px}
+.sale-product-summary{display:flex;justify-content:space-between;align-items:center;padding:10px 12px;border-radius:8px;background:#f6f7f9}
+.sale-product-summary span{font-size:9px;color:#87909d}
+.sale-product-summary strong{font:700 13px Manrope;color:#3c4960}
+:root[data-theme="dark"] .form-note{background:#211e39;border-color:#3a3157;color:#c3a8f0}
+:root[data-theme="dark"] .sale-product-summary{background:#20243a}
+:root[data-theme="dark"] .sale-product-summary span{color:#9ba2bf}
+:root[data-theme="dark"] .sale-product-summary strong{color:#e8e5f5}

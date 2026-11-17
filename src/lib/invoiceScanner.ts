@@ -116,7 +116,7 @@ const TABLE_HEADER_WORDS = /\b(artikel|produkt|beschreibung|bezeichnung|item|des
 function detectTableHeader(lines: string[]): number {
   for (let index = 0; index < lines.length; index++) {
     const line = lines[index]
-    const terms = [...line.matchAll(TABLE_HEADER_WORDS)].map(match => match[0].toLowerCase())
+    const terms = line.match(TABLE_HEADER_WORDS) || []
     const hasDescription = /artikel|produkt|beschreibung|bezeichnung|item|description/i.test(line)
     const hasPrice = /einzelpreis|stückpreis|unit\s*price|preis|price|betrag|amount|gesamtpreis|line\s*total/i.test(line)
     const hasQuantity = /menge|quantity|qty|anzahl|stück|stk/i.test(line)

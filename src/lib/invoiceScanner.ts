@@ -1,4 +1,4 @@
-import { recognizeInvoiceWithAI, type FlorenceOcrResult } from './invoiceAi'
+import { recognizeInvoiceWithAI, type FlorenceOcrResult } from './invoiceAi.ts'
 
 export type InvoiceLineItem = {
   id: string

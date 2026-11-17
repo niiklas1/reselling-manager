@@ -7,6 +7,7 @@ import {
   Camera, FileText, FileUp, ImagePlus, Moon, Sun, ExternalLink, RefreshCw, HardDrive
 } from 'lucide-react'
 import { readInvoiceFile, type InvoiceLineItem } from './lib/invoiceScanner'
+import { enrichInvoiceProductNames } from './lib/productLookup'
 import { googleImagesUrl, searchProductImages, type ProductImageResult } from './lib/productImages'
 
 type Status = 'Auf Lager' | 'Verkauft'
@@ -1077,12 +1078,21 @@ function ProductModal({ product, onClose, onSave }: {
         setScanProgress(Math.round(progress * 100))
         setScanStage(stage)
       })
-      setOcrText(extracted.text)
-      if (extracted.date) setPurchaseDate(extracted.date)
-      if (extracted.lineItems.length > 1 || extracted.lineItems.some(line => line.confidence < 0.72)) {
-        const initialLines: InvoiceDraftLine[] = extracted.lineItems.map(line => ({
+      setScanStage('Produktnamen werden mit EAN und Produktdatenbank abgeglichen')
+      const verifiedLines = await enrichInvoiceProductNames(extracted.lineItems)
+      const verifiedExtraction = {
+        ...extracted,
+        lineItems: verifiedLines,
+        name: verifiedLines[0]?.description || extracted.name,
+      }
+      setOcrText(verifiedExtraction.text)
+      if (verifiedExtraction.date) setPurchaseDate(verifiedExtraction.date)
+      if (verifiedExtraction.lineItems.length > 1 || verifiedExtraction.lineItems.some(line =>
+        line.confidence < 0.72 || line.productVerification === 'name' || (line.barcode && !line.productVerified)
+      )) {
+        const initialLines: InvoiceDraftLine[] = verifiedExtraction.lineItems.map(line => ({
           ...line,
-          selected: line.confidence >= 0.72,
+          selected: line.productVerification === 'barcode' || (!line.barcode && !line.productVerification && line.confidence >= 0.72),
           imageUrl: '',
           imageAttribution: '',
           imageLicense: '',
@@ -1091,9 +1101,9 @@ function ProductModal({ product, onClose, onSave }: {
           showImageOptions: false,
         }))
         setInvoiceLines(initialLines)
-        setName(extracted.name || initialLines[0].description)
-        setQuantity(String(extracted.quantity || 1))
-        setPurchasePrice(String(extracted.amount ?? initialLines.reduce((sum, line) => sum + line.amount, 0)))
+        setName(verifiedExtraction.name || initialLines[0].description)
+        setQuantity(String(verifiedExtraction.quantity || 1))
+        setPurchasePrice(String(verifiedExtraction.amount ?? initialLines.reduce((sum, line) => sum + line.amount, 0)))
         const withImages = await Promise.all(initialLines.map(async line => {
           try {
             const results = await searchProductImages(line.description)
@@ -1111,16 +1121,16 @@ function ProductModal({ product, onClose, onSave }: {
         }))
         setInvoiceLines(withImages)
       } else {
-        const firstLine = extracted.lineItems[0]
-        const productName = firstLine?.description || extracted.name
+        const firstLine = verifiedExtraction.lineItems[0]
+        const productName = firstLine?.description || verifiedExtraction.name
         setInvoiceLines([])
         if (productName) setName(productName)
         if (firstLine) {
           setPurchasePrice(firstLine.amount.toFixed(2))
           setQuantity(String(firstLine.quantity || 1))
-        } else if (extracted.amount !== null) {
-          setPurchasePrice(extracted.amount.toFixed(2))
-          setQuantity(String(extracted.quantity || 1))
+        } else if (verifiedExtraction.amount !== null) {
+          setPurchasePrice(verifiedExtraction.amount.toFixed(2))
+          setQuantity(String(verifiedExtraction.quantity || 1))
         }
         if (productName) await loadImages(productName)
         else setImageError('Der Produktname war auf dem Beleg nicht eindeutig. Bitte trage ihn selbst ein.')
@@ -1234,7 +1244,7 @@ function ProductModal({ product, onClose, onSave }: {
       {invoiceLines.length > 0 ? <div className="invoice-lines-panel full">
         <div className="invoice-lines-heading"><div><strong>{invoiceLines.length} erkannte Positionen</strong><small>Sichere Positionen sind vorausgewählt. Unsichere Erkennungen musst du aktiv auswählen. Prüfe Namen, Stückzahl und Gesamtpreis je Position.</small></div><span>{selectedLines.length} ausgewählt</span></div>
         {invoiceLines.map(line => <div className="invoice-line-card" key={line.id}>
-          <div className="invoice-line-top"><input type="checkbox" checked={line.selected} onChange={e => updateInvoiceLine(line.id,{selected:e.target.checked})}/><input className="invoice-line-name" value={line.description} onChange={e => updateInvoiceLine(line.id,{description:e.target.value})} aria-label="Artikelname"/><span className={line.confidence >= 0.72 ? 'invoice-confidence good' : 'invoice-confidence review'}>{line.confidence >= 0.72 ? 'Sicher' : 'Bitte prüfen'} · {Math.round(line.confidence * 100)}%</span></div>
+          <div className="invoice-line-top"><input type="checkbox" checked={line.selected} onChange={e => updateInvoiceLine(line.id,{selected:e.target.checked})}/><input className="invoice-line-name" value={line.description} onChange={e => updateInvoiceLine(line.id,{description:e.target.value})} aria-label="Artikelname"/><span className={line.productVerification === 'name' ? 'invoice-confidence review' : line.confidence >= 0.72 ? 'invoice-confidence good' : 'invoice-confidence review'}>{line.productVerification === 'barcode' ? 'EAN bestätigt' : line.productVerification === 'name' ? 'Katalogtreffer prüfen' : line.confidence >= 0.72 ? 'Sicher' : 'Bitte prüfen'} · {Math.round(line.confidence * 100)}%</span></div>
           <div className="invoice-line-bottom">
             <label><span>Stück</span><input type="number" min="1" step="1" value={line.quantity} onChange={e => updateInvoiceLine(line.id,{quantity:Number(e.target.value)})}/></label>
             <label><span>Gesamtpreis (€)</span><input type="number" min="0" step="0.01" value={line.amount} onChange={e => updateInvoiceLine(line.id,{amount:Number(e.target.value)})}/></label>

@@ -1,0 +1,127 @@
+import test from 'node:test'
+import assert from 'node:assert/strict'
+import { isValidBarcode } from '../src/lib/invoiceScanner.ts'
+import { enrichInvoiceProductNames, productNameSimilarity } from '../src/lib/productLookup.ts'
+
+test('validates common UPC and EAN check digits', () => {
+  assert.equal(isValidBarcode('196214147454'), true)
+  assert.equal(isValidBarcode('4006381333931'), true)
+  assert.equal(isValidBarcode('036000291452'), true)
+})
+
+test('rejects invalid check digits and non-barcode lengths', () => {
+  assert.equal(isValidBarcode('196214147455'), false)
+  assert.equal(isValidBarcode('1234567'), false)
+  assert.equal(isValidBarcode('123456789012345'), false)
+})
+
+test('matches OCR abbreviations and truncations to a real catalog title', () => {
+  const score = productNameSimilarity(
+    'PKM 30 Jahre Ditto Premi',
+    'Pokémon 30 Jahre Ditto Premium-Kollektion DE',
+  )
+  assert.ok(score >= 0.68, String(score))
+})
+
+test('does not match a payment terminal row to a product title', () => {
+  assert.ok(productNameSimilarity('EC Cash Contactless', 'Pokémon Ditto Premium Collection') < 0.4)
+})
+
+
+test('resolves the known Ditto EAN locally without using an external API', async () => {
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = async () => { throw new Error('No external request expected for a curated EAN') }
+  try {
+    const result = await enrichInvoiceProductNames([{
+      id: 'line-1',
+      description: 'PKM 30 Jahre Ditto Premi',
+      quantity: 1,
+      unitPrice: 46.99,
+      amount: 46.99,
+      confidence: 0.69,
+      barcode: '196214147454',
+    }])
+    assert.equal(result[0].description, 'Pokémon 30 Jahre Ditto Premium-Kollektion DE')
+    assert.equal(result[0].productVerified, true)
+    assert.equal(result[0].productVerification, 'barcode')
+    assert.equal(result[0].confidence, 0.99)
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
+test('uses the free UPC catalog for other exact barcode matches', async () => {
+  const originalFetch = globalThis.fetch
+  const originalStorage = globalThis.localStorage
+  const values = new Map()
+  Object.defineProperty(globalThis, 'localStorage', {
+    configurable: true,
+    value: {
+      getItem: key => values.get(key) ?? null,
+      setItem: (key, value) => values.set(key, String(value)),
+    },
+  })
+  globalThis.fetch = async input => {
+    assert.match(String(input), /\/api\/product\/lookup\?barcodes=4006381333931/)
+    return new Response(JSON.stringify({
+      code: 'OK',
+      items: [{ ean: '4006381333931', title: 'Catalog Test Product', brand: 'Test' }],
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+  }
+  try {
+    const result = await enrichInvoiceProductNames([{
+      id: 'line-2',
+      description: 'Catalog Test',
+      quantity: 1,
+      unitPrice: 1,
+      amount: 1,
+      confidence: 0.69,
+      barcode: '4006381333931',
+    }])
+    assert.equal(result[0].description, 'Catalog Test Product')
+    assert.equal(result[0].productVerification, 'barcode')
+  } finally {
+    globalThis.fetch = originalFetch
+    if (originalStorage === undefined) delete globalThis.localStorage
+    else Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: originalStorage })
+  }
+})
+
+
+test('keeps fuzzy name catalogue matches unchecked for human confirmation', async () => {
+  const originalFetch = globalThis.fetch
+  const originalStorage = globalThis.localStorage
+  const values = new Map()
+  Object.defineProperty(globalThis, 'localStorage', {
+    configurable: true,
+    value: {
+      getItem: key => values.get(key) ?? null,
+      setItem: (key, value) => values.set(key, String(value)),
+    },
+  })
+  globalThis.fetch = async input => {
+    assert.match(String(input), /\/api\/product\/search\?q=/)
+    return new Response(JSON.stringify({
+      code: 'OK',
+      items: [{ title: 'Pokémon Ditto Premium Collection' }],
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+  }
+
+  try {
+    const result = await enrichInvoiceProductNames([{
+      id: 'line-2',
+      description: 'Ditto Premium Collection',
+      quantity: 1,
+      unitPrice: 39.99,
+      amount: 39.99,
+      confidence: 0.69,
+    }])
+    assert.equal(result[0].description, 'Pokémon Ditto Premium Collection')
+    assert.equal(result[0].productVerification, 'name')
+    assert.equal(result[0].confidence, 0.84)
+  } finally {
+    globalThis.fetch = originalFetch
+    if (originalStorage === undefined) delete globalThis.localStorage
+    else Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: originalStorage })
+  }
+})

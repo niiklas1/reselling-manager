@@ -100,3 +100,28 @@ test('normalizes literal OCR line-break escapes and strips stray symbols from pr
   assert.equal(result.lineItems[0].amount, 46.99)
   assert.equal(result.amount, 46.99)
 })
+
+
+test('attaches a valid EAN from its labelled receipt row to the following product', () => {
+  const result = parseInvoiceText([
+    'Thalia Baunatal',
+    'Art/EAN 196214147454',
+    'PKM 30 Jahre Ditto Premi 46,99',
+    'SUMME [1] EUR 46,99',
+  ].join('\n'))
+
+  assert.equal(result.lineItems.length, 1)
+  assert.equal(result.lineItems[0].barcode, '196214147454')
+  assert.equal(result.lineItems[0].description, 'PKM 30 Jahre Ditto Premi')
+})
+
+test('does not attach a barcode with an invalid check digit', () => {
+  const result = parseInvoiceText([
+    'Art/EAN 196214147455',
+    'Pokémon Ditto Premium Collection 46,99',
+    'SUMME 46,99',
+  ].join('\n'))
+
+  assert.equal(result.lineItems.length, 1)
+  assert.equal(result.lineItems[0].barcode, undefined)
+})

@@ -177,7 +177,7 @@ export async function enrichInvoiceProductNames(lines: InvoiceLineItem[]): Promi
     if (!line.barcode) return line
     const item = barcodeMatches.get(line.barcode)
     if (!item?.title) return { ...line, confidence: Math.min(line.confidence, 0.69) }
-    return { ...line, description: item.title.trim(), confidence: 0.99, productVerified: true }
+    return { ...line, description: item.title.trim(), confidence: 0.99, productVerified: true, productVerification: 'barcode' }
   })
   // Do not spend a second trial API request on a receipt that already had a barcode.
   // A labelled but unresolved barcode remains unverified and is sent to manual review.
@@ -195,7 +195,7 @@ export async function enrichInvoiceProductNames(lines: InvoiceLineItem[]): Promi
   if (ranked.length > 1 && ranked[0].score - ranked[1].score < 0.035 &&
       ranked[0].item.title !== ranked[1].item.title) return enriched
   enriched = enriched.map((line, index) => index === candidateIndex
-    ? { ...line, description: ranked[0].item.title!.trim(), confidence: Math.max(line.confidence, 0.94), productVerified: true }
+    ? { ...line, description: ranked[0].item.title!.trim(), confidence: Math.max(line.confidence, 0.84), productVerified: true, productVerification: 'name' }
     : line)
   return enriched
 }

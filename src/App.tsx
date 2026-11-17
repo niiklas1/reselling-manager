@@ -8,8 +8,8 @@ import {
 } from 'lucide-react'
 import type { Session } from '@supabase/supabase-js'
 import { supabase } from './lib/supabase'
-import { readInvoiceFile } from './lib/invoiceScanner'
-import { searchProductImages, type ProductImageResult } from './lib/productImages'
+import { readInvoiceFile, type InvoiceLineItem } from './lib/invoiceScanner'
+import { googleImagesUrl, searchProductImages, type ProductImageResult } from './lib/productImages'
 
 type Status = 'Auf Lager' | 'Verkauft'
 type Product = {
@@ -31,6 +31,16 @@ type Product = {
   receiptPath: string
 }
 type Section = 'Übersicht' | 'Produkte' | 'Verkäufe' | 'Auswertungen' | 'Einstellungen'
+
+type InvoiceDraftLine = InvoiceLineItem & {
+  selected: boolean
+  imageUrl: string
+  imageAttribution: string
+  imageLicense: string
+  imageOptions: ProductImageResult[]
+  imageLoading: boolean
+  showImageOptions: boolean
+}
 
 const initialProducts: Product[] = []
 
@@ -174,15 +184,16 @@ function App() {
     return matchesSearch && (filter === 'Alle' || p.status === filter)
   }), [products, search, filter])
 
-  async function saveProduct(product: Product, invoiceFile?: File | null): Promise<boolean> {
-    if (!session?.user.id) return false
+  async function saveProduct(batch: Product[], invoiceFile?: File | null): Promise<boolean> {
+    if (!session?.user.id || batch.length === 0) return false
     setDataError('')
-    let receiptPath = product.receiptPath || null
+    const previousReceiptPath = editing?.receiptPath || null
+    let receiptPath = batch[0].receiptPath || null
     let newlyUploadedPath = ''
 
     if (invoiceFile) {
       const safeName = invoiceFile.name.replace(/[^a-zA-Z0-9._-]/g, '_').slice(-90)
-      newlyUploadedPath = session.user.id + '/' + product.id + '/' + Date.now() + '-' + safeName
+      newlyUploadedPath = session.user.id + '/receipts/' + crypto.randomUUID() + '/' + safeName
       const { error: uploadError } = await supabase.storage
         .from('product-invoices')
         .upload(newlyUploadedPath, invoiceFile, { contentType: invoiceFile.type || 'application/octet-stream', upsert: false })
@@ -193,7 +204,7 @@ function App() {
       receiptPath = newlyUploadedPath
     }
 
-    const payload = {
+    const makePayload = (product: Product) => ({
       user_id: session.user.id,
       name: product.name,
       category: product.category,
@@ -210,20 +221,27 @@ function App() {
       image_attribution: product.imageAttribution || null,
       image_license: product.imageLicense || null,
       receipt_path: receiptPath,
-    }
+    })
+
     const result = editing
-      ? await supabase.from('products').update(payload).eq('id', product.id).select('*').single()
-      : await supabase.from('products').insert({ id: product.id, ...payload }).select('*').single()
+      ? await supabase.from('products').update(makePayload(batch[0])).eq('id', batch[0].id).select('*').single()
+      : await supabase.from('products').insert(batch.map(product => ({ id: product.id, ...makePayload(product) }))).select('*')
 
     if (result.error) {
       if (newlyUploadedPath) await supabase.storage.from('product-invoices').remove([newlyUploadedPath])
       setDataError('Produkt konnte nicht gespeichert werden: ' + result.error.message)
       return false
     }
-    const saved = mapProductRow(result.data)
+
+    const savedRows = (Array.isArray(result.data) ? result.data : [result.data]).filter(Boolean).map(mapProductRow)
     setProducts(current => editing
-      ? current.map(p => p.id === saved.id ? saved : p)
-      : [saved, ...current])
+      ? current.map(product => product.id === savedRows[0].id ? savedRows[0] : product)
+      : [...savedRows, ...current])
+
+    if (previousReceiptPath && previousReceiptPath !== receiptPath &&
+        !products.some(product => product.id !== editing?.id && product.receiptPath === previousReceiptPath)) {
+      await supabase.storage.from('product-invoices').remove([previousReceiptPath])
+    }
     setShowForm(false)
     setEditing(null)
     return true
@@ -238,7 +256,7 @@ function App() {
       setDataError(`Produkt konnte nicht gelöscht werden: ${error.message}`)
       return
     }
-    if (productToDelete?.receiptPath) {
+    if (productToDelete?.receiptPath && !products.some(product => product.id !== id && product.receiptPath === productToDelete.receiptPath)) {
       await supabase.storage.from('product-invoices').remove([productToDelete.receiptPath])
     }
     setProducts(current => current.filter(p => p.id !== id))

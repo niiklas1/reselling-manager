@@ -1090,7 +1090,7 @@ function ProductModal({ product, onClose, onSave }: {
       if (verifiedExtraction.lineItems.length > 1 || verifiedExtraction.lineItems.some(line => line.confidence < 0.72)) {
         const initialLines: InvoiceDraftLine[] = verifiedExtraction.lineItems.map(line => ({
           ...line,
-          selected: line.confidence >= 0.72,
+          selected: line.productVerified || (!line.barcode && line.confidence >= 0.72),
           imageUrl: '',
           imageAttribution: '',
           imageLicense: '',

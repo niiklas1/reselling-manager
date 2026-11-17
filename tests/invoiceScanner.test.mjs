@@ -82,7 +82,7 @@ test('parses a Thalia thermal receipt and ignores SUMME, EC Cash and terminal me
     'Betrag EUR 46,99',
     'MWST BRUTTO NETTO 19% 7,50 46,99 39,49',
     'TSE Transaktionsnummer 235609',
-  ].join('\\n'))
+  ].join('\n'))
 
   assert.equal(result.lineItems.length, 1)
   assert.equal(result.lineItems[0].description, 'PKM 30 Jahre Ditto Premi')

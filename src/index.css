@@ -319,3 +319,6 @@ body{background:#f1eff8}
 :root[data-theme="dark"] .sale-product-summary{background:#20243a}
 :root[data-theme="dark"] .sale-product-summary span{color:#9ba2bf}
 :root[data-theme="dark"] .sale-product-summary strong{color:#e8e5f5}
+
+.sale-action{display:inline-flex!important;align-items:center;gap:4px;white-space:nowrap;color:#7856dc!important;font-size:8px;font-weight:700}
+:root[data-theme="dark"] .sale-action{color:#d0adff!important}

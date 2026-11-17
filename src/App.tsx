@@ -3,11 +3,9 @@ import {
   ArrowDownToLine, ArrowUpRight, Bell, Box, ChartNoAxesCombined, ChevronDown,
   CircleHelp, LayoutDashboard, Menu, Package, Plus, Search, Settings,
   ShoppingBag, SlidersHorizontal, Sparkles, Wallet, X, Trash2, Pencil,
-  CalendarDays, Tag, Truck, CheckCircle2, LogOut, Mail, LockKeyhole, LoaderCircle,
-  Camera, FileText, FileUp, ImagePlus, Moon, Sun, ExternalLink, RefreshCw
+  CalendarDays, Tag, Truck, CheckCircle2, LoaderCircle,
+  Camera, FileText, FileUp, ImagePlus, Moon, Sun, ExternalLink, RefreshCw, HardDrive
 } from 'lucide-react'
-import type { Session } from '@supabase/supabase-js'
-import { supabase } from './lib/supabase'
 import { readInvoiceFile, type InvoiceLineItem } from './lib/invoiceScanner'
 import { googleImagesUrl, searchProductImages, type ProductImageResult } from './lib/productImages'
 
@@ -42,40 +40,90 @@ type InvoiceDraftLine = InvoiceLineItem & {
   showImageOptions: boolean
 }
 
-const initialProducts: Product[] = []
+const PRODUCTS_STORAGE_KEY = 'reselling-products'
+const RECEIPTS_DB_NAME = 'reselling-manager-local'
+const RECEIPTS_STORE = 'receipts'
 
 const money = (value: number) => new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'EUR' }).format(value)
 const profit = (p: Product) => p.salePrice - p.purchasePrice - p.shipping - p.fees
 
-function mapProductRow(row: any): Product {
-  return {
-    id: row.id,
-    name: row.name,
-    category: row.category || '',
-    platform: row.platform || '',
-    purchasePrice: Number(row.purchase_price || 0),
-    salePrice: Number(row.sale_price || 0),
-    shipping: Number(row.shipping || 0),
-    fees: Number(row.fees || 0),
-    purchaseDate: row.purchase_date || '',
-    saleDate: row.sale_date || '',
-    status: row.status as Status,
-    quantity: Number(row.quantity || 1),
-    imageUrl: row.image_url || '',
-    imageAttribution: row.image_attribution || '',
-    imageLicense: row.image_license || '',
-    receiptPath: row.receipt_path || '',
+function readStoredProducts(): Product[] {
+  try {
+    const stored = JSON.parse(localStorage.getItem(PRODUCTS_STORAGE_KEY) || '[]')
+    if (!Array.isArray(stored)) return []
+    return stored.map((item: Partial<Product>) => ({
+      id: item.id || crypto.randomUUID(),
+      name: item.name || '',
+      category: item.category || '',
+      platform: item.platform || '',
+      purchasePrice: Number(item.purchasePrice || 0),
+      salePrice: Number(item.salePrice || 0),
+      shipping: Number(item.shipping || 0),
+      fees: Number(item.fees || 0),
+      purchaseDate: item.purchaseDate || '',
+      saleDate: item.saleDate || '',
+      status: item.status === 'Verkauft' ? 'Verkauft' : 'Auf Lager',
+      quantity: Math.max(1, Number(item.quantity || 1)),
+      imageUrl: item.imageUrl || '',
+      imageAttribution: item.imageAttribution || '',
+      imageLicense: item.imageLicense || '',
+      receiptPath: item.receiptPath?.startsWith('local:') ? item.receiptPath : '',
+    }))
+  } catch {
+    return []
   }
+}
+
+function openReceiptsDb(): Promise<IDBDatabase> {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(RECEIPTS_DB_NAME, 1)
+    request.onupgradeneeded = () => {
+      if (!request.result.objectStoreNames.contains(RECEIPTS_STORE)) {
+        request.result.createObjectStore(RECEIPTS_STORE)
+      }
+    }
+    request.onsuccess = () => resolve(request.result)
+    request.onerror = () => reject(request.error || new Error('Lokaler Belegspeicher konnte nicht geöffnet werden.'))
+  })
+}
+
+async function saveLocalReceipt(file: File): Promise<string> {
+  const db = await openReceiptsDb()
+  const id = crypto.randomUUID()
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction(RECEIPTS_STORE, 'readwrite')
+    transaction.objectStore(RECEIPTS_STORE).put(file, id)
+    transaction.oncomplete = () => { db.close(); resolve('local:' + id) }
+    transaction.onerror = () => { db.close(); reject(transaction.error || new Error('Beleg konnte nicht lokal gespeichert werden.')) }
+    transaction.onabort = () => { db.close(); reject(transaction.error || new Error('Speichern des Belegs wurde abgebrochen.')) }
+  })
+}
+
+async function readLocalReceipt(path: string): Promise<Blob | null> {
+  if (!path.startsWith('local:')) return null
+  const db = await openReceiptsDb()
+  return new Promise((resolve, reject) => {
+    const request = db.transaction(RECEIPTS_STORE, 'readonly').objectStore(RECEIPTS_STORE).get(path.slice(6))
+    request.onsuccess = () => { db.close(); resolve((request.result as Blob) || null) }
+    request.onerror = () => { db.close(); reject(request.error || new Error('Beleg konnte nicht gelesen werden.')) }
+  })
+}
+
+async function deleteLocalReceipt(path: string): Promise<void> {
+  if (!path.startsWith('local:')) return
+  const db = await openReceiptsDb()
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction(RECEIPTS_STORE, 'readwrite')
+    transaction.objectStore(RECEIPTS_STORE).delete(path.slice(6))
+    transaction.oncomplete = () => { db.close(); resolve() }
+    transaction.onerror = () => { db.close(); reject(transaction.error || new Error('Beleg konnte nicht gelöscht werden.')) }
+  })
 }
 
 function App() {
   const [section, setSection] = useState<Section>('Übersicht')
-  const [session, setSession] = useState<Session | null>(null)
-  const [passwordRecovery, setPasswordRecovery] = useState(false)
-  const [authLoading, setAuthLoading] = useState(true)
-  const [productsLoading, setProductsLoading] = useState(false)
   const [dataError, setDataError] = useState('')
-  const [products, setProducts] = useState<Product[]>([])
+  const [products, setProducts] = useState<Product[]>(readStoredProducts())
   const [search, setSearch] = useState('')
   const [filter, setFilter] = useState<'Alle' | Status>('Alle')
   const [showForm, setShowForm] = useState(false)
@@ -93,83 +141,12 @@ function App() {
   }, [theme])
 
   useEffect(() => {
-    let mounted = true
-    supabase.auth.getSession().then(({ data, error }) => {
-      if (!mounted) return
-      if (error) setDataError(error.message)
-      setSession(data.session)
-      setAuthLoading(false)
-    })
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, nextSession) => {
-      if (event === 'PASSWORD_RECOVERY') setPasswordRecovery(true)
-      setSession(nextSession)
-      setAuthLoading(false)
-    })
-    return () => {
-      mounted = false
-      subscription.unsubscribe()
+    try {
+      localStorage.setItem(PRODUCTS_STORAGE_KEY, JSON.stringify(products))
+    } catch {
+      setDataError('Der lokale Speicher ist voll. Entferne große oder nicht mehr benötigte Belege.')
     }
-  }, [])
-
-  useEffect(() => {
-    const userId = session?.user.id
-    if (!userId) {
-      setProducts([])
-      setProductsLoading(false)
-      return
-    }
-
-    let cancelled = false
-    const loadProducts = async () => {
-      setProductsLoading(true)
-      setDataError('')
-      const { data, error } = await supabase
-        .from('products')
-        .select('*')
-        .order('created_at', { ascending: false })
-
-      if (cancelled) return
-      if (error) {
-        setDataError(`Deine Produkte konnten nicht geladen werden: ${error.message}`)
-        setProductsLoading(false)
-        return
-      }
-
-      let rows = data || []
-      if (rows.length === 0) {
-        try {
-          const legacy = JSON.parse(localStorage.getItem('reselling-products') || '[]') as Product[]
-          if (Array.isArray(legacy) && legacy.length > 0 && window.confirm(`Du hast noch ${legacy.length} lokal gespeicherte Produkte aus der alten App. Möchtest du sie in diesen Account übernehmen?`)) {
-            const importRows = legacy.map((p) => ({
-              user_id: userId,
-              name: p.name,
-              category: p.category || '',
-              platform: p.platform || '',
-              purchase_price: Number(p.purchasePrice || 0),
-              sale_price: Number(p.salePrice || 0),
-              shipping: Number(p.shipping || 0),
-              fees: Number(p.fees || 0),
-              purchase_date: p.purchaseDate || null,
-              sale_date: p.saleDate || null,
-              status: p.status || 'Auf Lager',
-            }))
-            const { data: imported, error: importError } = await supabase.from('products').insert(importRows).select('*').order('created_at', { ascending: false })
-            if (importError) setDataError(`Die alten Produkte konnten nicht importiert werden: ${importError.message}`)
-            else rows = imported || []
-          }
-        } catch {
-          // Ignore invalid legacy browser data and keep the account's cloud inventory empty.
-        }
-      }
-
-      if (cancelled) return
-      setProducts(rows.map(mapProductRow))
-      setProductsLoading(false)
-    }
-
-    void loadProducts()
-    return () => { cancelled = true }
-  }, [session?.user.id])
+  }, [products])
 
 
   const sold = products.filter(p => p.status === 'Verkauft')
@@ -185,62 +162,26 @@ function App() {
   }), [products, search, filter])
 
   async function saveProduct(batch: Product[], invoiceFile?: File | null): Promise<boolean> {
-    if (!session?.user.id || batch.length === 0) return false
+    if (batch.length === 0) return false
     setDataError('')
-    const previousReceiptPath = editing?.receiptPath || null
-    let receiptPath = batch[0].receiptPath || null
-    let newlyUploadedPath = ''
+    const previousReceiptPath = editing?.receiptPath || ''
+    let receiptPath = batch[0].receiptPath || ''
 
-    if (invoiceFile) {
-      const safeName = invoiceFile.name.replace(/[^a-zA-Z0-9._-]/g, '_').slice(-90)
-      newlyUploadedPath = session.user.id + '/receipts/' + crypto.randomUUID() + '/' + safeName
-      const { error: uploadError } = await supabase.storage
-        .from('product-invoices')
-        .upload(newlyUploadedPath, invoiceFile, { contentType: invoiceFile.type || 'application/octet-stream', upsert: false })
-      if (uploadError) {
-        setDataError('Der Beleg konnte nicht gespeichert werden: ' + uploadError.message)
-        return false
-      }
-      receiptPath = newlyUploadedPath
-    }
-
-    const makePayload = (product: Product) => ({
-      user_id: session.user.id,
-      name: product.name,
-      category: product.category,
-      platform: product.platform,
-      purchase_price: product.purchasePrice,
-      sale_price: product.salePrice,
-      shipping: product.shipping,
-      fees: product.fees,
-      purchase_date: product.purchaseDate || null,
-      sale_date: product.saleDate || null,
-      status: product.status,
-      quantity: product.quantity,
-      image_url: product.imageUrl || null,
-      image_attribution: product.imageAttribution || null,
-      image_license: product.imageLicense || null,
-      receipt_path: receiptPath,
-    })
-
-    const result = editing
-      ? await supabase.from('products').update(makePayload(batch[0])).eq('id', batch[0].id).select('*').single()
-      : await supabase.from('products').insert(batch.map(product => ({ id: product.id, ...makePayload(product) }))).select('*')
-
-    if (result.error) {
-      if (newlyUploadedPath) await supabase.storage.from('product-invoices').remove([newlyUploadedPath])
-      setDataError('Produkt konnte nicht gespeichert werden: ' + result.error.message)
+    try {
+      if (invoiceFile) receiptPath = await saveLocalReceipt(invoiceFile)
+    } catch (error) {
+      setDataError(error instanceof Error ? error.message : 'Der Beleg konnte nicht lokal gespeichert werden.')
       return false
     }
 
-    const savedRows = (Array.isArray(result.data) ? result.data : [result.data]).filter(Boolean).map(mapProductRow)
+    const savedRows = batch.map(product => ({ ...product, receiptPath }))
     setProducts(current => editing
       ? current.map(product => product.id === savedRows[0].id ? savedRows[0] : product)
       : [...savedRows, ...current])
 
     if (previousReceiptPath && previousReceiptPath !== receiptPath &&
         !products.some(product => product.id !== editing?.id && product.receiptPath === previousReceiptPath)) {
-      await supabase.storage.from('product-invoices').remove([previousReceiptPath])
+      try { await deleteLocalReceipt(previousReceiptPath) } catch { /* Product data remains saved locally. */ }
     }
     setShowForm(false)
     setEditing(null)
@@ -251,28 +192,12 @@ function App() {
   async function deleteProduct(id: string) {
     if (!window.confirm('Möchtest du dieses Produkt wirklich löschen?')) return
     const productToDelete = products.find(product => product.id === id)
-    const { error } = await supabase.from('products').delete().eq('id', id)
-    if (error) {
-      setDataError(`Produkt konnte nicht gelöscht werden: ${error.message}`)
-      return
-    }
-    if (productToDelete?.receiptPath && !products.some(product => product.id !== id && product.receiptPath === productToDelete.receiptPath)) {
-      await supabase.storage.from('product-invoices').remove([productToDelete.receiptPath])
-    }
     setProducts(current => current.filter(p => p.id !== id))
+    if (productToDelete?.receiptPath && !products.some(product => product.id !== id && product.receiptPath === productToDelete.receiptPath)) {
+      try { await deleteLocalReceipt(productToDelete.receiptPath) } catch { setDataError('Produkt gelöscht, der zugehörige Beleg konnte aber nicht entfernt werden.') }
+    }
   }
   function openNew() { setEditing(null); setShowForm(true) }
-  async function signOut() {
-    const { error } = await supabase.auth.signOut()
-    if (error) setDataError(`Abmeldung fehlgeschlagen: ${error.message}`)
-  }
-
-
-  if (authLoading) {
-    return <div className="auth-loading"><LoaderCircle className="spin" size={24}/><span>Reselling Manager wird geladen …</span></div>
-  }
-  if (passwordRecovery) return <PasswordRecoveryScreen onComplete={() => setPasswordRecovery(false)} />
-  if (!session) return <AuthScreen />
 
   const navItems: { label: Section; icon: typeof LayoutDashboard }[] = [
     { label: 'Übersicht', icon: LayoutDashboard },
@@ -295,7 +220,7 @@ function App() {
         </nav>
         <div className="sidebar-spacer"/>
         <button className={section === 'Einstellungen' ? 'nav-link selected' : 'nav-link'} onClick={() => setSection('Einstellungen')}><Settings size={18}/><span>Einstellungen</span></button>
-        <button className="profile-card" onClick={() => { setSection('Einstellungen'); setMobileNav(false) }} title="Konto und Einstellungen öffnen"><div className="profile-avatar">N</div><div className="profile-copy"><strong>Mein Workspace</strong><span>{session.user.email}</span></div><ChevronDown size={15} className="profile-chevron"/></button>
+        <button className="profile-card" onClick={() => { setSection('Einstellungen'); setMobileNav(false) }} title="Lokale Einstellungen öffnen"><div className="profile-avatar">N</div><div className="profile-copy"><strong>Mein Workspace</strong><span>Lokales Gerät</span></div><ChevronDown size={15} className="profile-chevron"/></button>
         <div className="sidebar-foot">RESSELLMANAGER <span>·</span> V 0.1</div>
       </aside>
 
@@ -305,12 +230,11 @@ function App() {
         <header className="topbar">
           <button className="mobile-menu" onClick={() => setMobileNav(true)}><Menu size={20}/></button>
           <div className="breadcrumbs"><span>Workspace</span><b>/</b><strong>{section}</strong></div>
-          <div className="topbar-right"><span className="local-status"><i/> Cloud synchronisiert</span><button className="top-icon" aria-label="Hilfe" title="Hilfe" onClick={() => setShowHelp(true)}><CircleHelp size={18}/></button><button className="theme-toggle" aria-label={theme === 'dark' ? 'Helles Design aktivieren' : 'Dark Mode aktivieren'} title={theme === 'dark' ? 'Helles Design' : 'Dark Mode'} onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}>{theme === 'dark' ? <Sun size={16}/> : <Moon size={16}/>}</button><span className="account-email">{session.user.email}</span><button className="top-avatar top-avatar-button" onClick={() => setSection('Einstellungen')} title="Konto und Einstellungen">N</button><button className="signout-button" onClick={signOut}><LogOut size={14}/><span>Abmelden</span></button></div>
+          <div className="topbar-right"><span className="local-status"><i/> Nur dieses Gerät</span><button className="top-icon" aria-label="Hilfe" title="Hilfe" onClick={() => setShowHelp(true)}><CircleHelp size={18}/></button><button className="theme-toggle" aria-label={theme === 'dark' ? 'Helles Design aktivieren' : 'Dark Mode aktivieren'} title={theme === 'dark' ? 'Helles Design' : 'Dark Mode'} onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}>{theme === 'dark' ? <Sun size={16}/> : <Moon size={16}/>}</button><button className="top-avatar top-avatar-button" onClick={() => setSection('Einstellungen')} title="Einstellungen">N</button></div>
         </header>
 
         <div className="page-wrap">
           {dataError && <div className="app-alert error" role="alert">{dataError}</div>}
-          {productsLoading && <div className="app-alert">Deine Cloud-Daten werden geladen …</div>}
           {section === 'Übersicht' && (
             <>
               <div className="page-header"><div><div className="overline">DEIN BUSINESS AUF EINEN BLICK</div><h1>Übersicht</h1><p>Willkommen zurück. Hier ist dein aktueller Überblick.</p></div><button className="button-primary" onClick={openNew}><Plus size={17}/> Produkt hinzufügen</button></div>
@@ -352,191 +276,17 @@ function App() {
           )}
 
           {section === 'Auswertungen' && <section className="panel coming-panel"><div className="coming-icon"><Sparkles size={23}/></div><h2>Auswertungen</h2><p>Hier bauen wir deine Monatsübersichten, Gewinnentwicklung und Plattformvergleiche auf.</p><span className="coming-tag">WIRD ALS NÄCHSTES ERWEITERT</span></section>}
-          {section === 'Einstellungen' && <section className="panel settings-panel"><div className="panel-title-row"><div><h2>Konto & Einstellungen</h2><p>Dein persönlicher Workspace und das Erscheinungsbild.</p></div></div><div className="setting-row"><div><strong>Angemeldet als</strong><span>{session.user.email}</span></div><span className="setting-pill">Persönlich</span></div><div className="setting-row"><div><strong>Erscheinungsbild</strong><span>Zwischen dem dunklen Neon-Look und dem hellen Design wechseln.</span></div><button className="setting-toggle" onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}>{theme === 'dark' ? <Sun size={15}/> : <Moon size={15}/>} {theme === 'dark' ? 'Helles Design' : 'Dark Mode'}</button></div><div className="setting-row"><div><strong>Datenspeicherung</strong><span>Deine Produkte und Belege werden in deinem persönlichen Cloud-Account gespeichert.</span></div><span className="setting-pill">Cloud</span></div><div className="setting-row"><div><strong>Währung</strong><span>Alle Beträge werden in Euro angezeigt.</span></div><span className="setting-pill">EUR (€)</span></div><div className="setting-row"><div><strong>App-Version</strong><span>Reselling Manager – Invoice Studio</span></div><span className="setting-pill">0.2.0</span></div></section>}
+          {section === 'Einstellungen' && <section className="panel settings-panel"><div className="panel-title-row"><div><h2>Lokaler Workspace</h2><p>Die App läuft ohne Konto, Anmeldung oder E-Mail-Versand.</p></div></div><div className="setting-row"><div><strong>Betriebsmodus</strong><span>Persönliche Nutzung auf diesem Gerät.</span></div><span className="setting-pill">Ohne Login</span></div><div className="setting-row"><div><strong>Erscheinungsbild</strong><span>Zwischen dem dunklen Neon-Look und dem hellen Design wechseln.</span></div><button className="setting-toggle" onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}>{theme === 'dark' ? <Sun size={15}/> : <Moon size={15}/>} {theme === 'dark' ? 'Helles Design' : 'Dark Mode'}</button></div><div className="setting-row"><div><strong>Datenspeicherung</strong><span>Produkte werden nur in diesem Browser gespeichert. Es gibt keine Cloud-Synchronisierung.</span></div><span className="setting-pill">Lokal</span></div><div className="setting-row"><div><strong>Belege</strong><span>PDFs und Bilder werden im lokalen Browserspeicher dieses Geräts abgelegt.</span></div><span className="setting-pill">Auf diesem Gerät</span></div><div className="setting-row"><div><strong>Währung</strong><span>Alle Beträge werden in Euro angezeigt.</span></div><span className="setting-pill">EUR (€)</span></div><div className="setting-row"><div><strong>App-Version</strong><span>Reselling Manager – Invoice Studio</span></div><span className="setting-pill">0.3.0 Local</span></div></section>}
           <footer className="page-footer">Reselling Manager <span>·</span> Einfach den Überblick behalten.</footer>
         </div>
       </main>
 
-      {showForm && <ProductModal product={editing} userId={session.user.id} onClose={() => {setShowForm(false);setEditing(null)}} onSave={saveProduct}/>}
+      {showForm && <ProductModal product={editing} onClose={() => {setShowForm(false);setEditing(null)}} onSave={saveProduct}/>}
       {showHelp && <HelpModal onClose={() => setShowHelp(false)}/>}
     </div>
   )
 }
 
-
-function friendlyAuthError(error: unknown): string {
-  const detail = error as { message?: string; code?: string; status?: number }
-  const message = (detail?.message || '').toLowerCase()
-  const code = (detail?.code || '').toLowerCase()
-  const status = Number(detail?.status || 0)
-
-  if (code === 'over_email_send_rate_limit' || message.includes('email rate limit exceeded')) {
-    return 'Der E-Mail-Versand ist für unser gesamtes Projekt gerade ausgeschöpft. Supabase erlaubt mit dem eingebauten E-Mail-Dienst nur 2 Bestätigungs- und Passwort-E-Mails pro Stunde – gemeinsam für alle Nutzer. Bitte nicht ständig erneut versuchen. Dauerhaft lösen wir das mit einem eigenen SMTP-Maildienst.'
-  }
-  if (code === 'email_address_not_authorized' || message.includes('email address not authorized')) {
-    return 'Supabase lässt mit dem eingebauten E-Mail-Dienst nur E-Mail-Adressen von Projektmitgliedern zu. Für öffentliche Registrierungen benötigen wir einen eigenen SMTP-Maildienst.'
-  }
-  if (code === 'over_request_rate_limit' || message.includes('too many requests') || (status === 429 && !message.includes('email'))) {
-    return 'Es gab zu viele Authentifizierungsanfragen in kurzer Zeit. Bitte warte einige Minuten und versuche es dann einmal erneut.'
-  }
-  if (message.includes('user already registered') || code === 'user_already_exists') {
-    return 'Für diese E-Mail-Adresse besteht bereits ein Account. Melde dich an oder nutze „Passwort vergessen?“.'
-  }
-  return detail?.message || 'Es ist ein unbekannter Fehler aufgetreten. Bitte versuche es später erneut.'
-}
-
-
-function AuthScreen() {
-  const [mode, setMode] = useState<'login' | 'signup' | 'reset'>('login')
-  const [email, setEmail] = useState('')
-  const [password, setPassword] = useState('')
-  const [confirmPassword, setConfirmPassword] = useState('')
-  const [busy, setBusy] = useState(false)
-  const [message, setMessage] = useState('')
-  const [error, setError] = useState('')
-
-  async function submit(e: React.FormEvent) {
-    e.preventDefault()
-    setError('')
-    setMessage('')
-    const normalizedEmail = email.trim().toLowerCase()
-    if (!normalizedEmail) {
-      setError('Bitte gib deine E-Mail-Adresse ein.')
-      return
-    }
-    if (mode !== 'reset' && password.length < 8) {
-      setError('Dein Passwort muss mindestens 8 Zeichen lang sein.')
-      return
-    }
-    if (mode === 'signup' && password !== confirmPassword) {
-      setError('Die beiden Passwörter stimmen nicht überein.')
-      return
-    }
-
-    setBusy(true)
-    try {
-      if (mode === 'login') {
-        const { error: authError } = await supabase.auth.signInWithPassword({ email: normalizedEmail, password })
-        if (authError) throw authError
-      } else if (mode === 'signup') {
-        const { data, error: authError } = await supabase.auth.signUp({
-          email: normalizedEmail,
-          password,
-          options: { emailRedirectTo: window.location.origin },
-        })
-        if (authError) throw authError
-        if (data.session) {
-          setMessage('Dein Account wurde erstellt. Du bist jetzt angemeldet.')
-        } else {
-          setMessage('Fast geschafft! Bitte bestätige deine E-Mail-Adresse über den Link in deinem Posteingang. Danach kannst du dich anmelden.')
-        }
-        setMode('login')
-        setPassword('')
-        setConfirmPassword('')
-      } else {
-        const { error: authError } = await supabase.auth.resetPasswordForEmail(normalizedEmail, {
-          redirectTo: window.location.origin,
-        })
-        if (authError) throw authError
-        setMessage('Wenn ein Account zu dieser Adresse existiert, erhältst du eine E-Mail zum Zurücksetzen des Passworts.')
-        setMode('login')
-      }
-    } catch (err) {
-      setError(friendlyAuthError(err))
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  const isSignup = mode === 'signup'
-  const isReset = mode === 'reset'
-
-  return (
-    <main className="auth-screen">
-      <section className="auth-card">
-        <div className="auth-brand"><div className="brand-symbol">r.</div><span>resell<span className="brand-muted">manager</span></span></div>
-        <div className="auth-heading">
-          <div className="overline">{isSignup ? 'NEU HIER?' : isReset ? 'ACCOUNT WIEDERHERSTELLEN' : 'WILLKOMMEN ZURÜCK'}</div>
-          <h1>{isSignup ? 'Account erstellen' : isReset ? 'Passwort zurücksetzen' : 'Anmelden'}</h1>
-          <p>{isSignup ? 'Erstelle deinen persönlichen Reselling-Workspace.' : isReset ? 'Wir senden dir einen Link zum Zurücksetzen.' : 'Melde dich an, um deine Produkte und Verkäufe zu verwalten.'}</p>
-        </div>
-        {message && <div className="auth-message success" role="status">{message}</div>}
-        {error && <div className="auth-message error" role="alert">{error}</div>}
-        <form className="auth-form" onSubmit={submit}>
-          <label className="field"><span>E-Mail-Adresse</span><div className="auth-input-wrap"><Mail size={16}/><input type="email" required autoComplete="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="name@beispiel.de"/></div></label>
-          {!isReset && <label className="field"><span>Passwort</span><div className="auth-input-wrap"><LockKeyhole size={16}/><input type="password" required minLength={8} autoComplete={isSignup ? 'new-password' : 'current-password'} value={password} onChange={e => setPassword(e.target.value)} placeholder="Mindestens 8 Zeichen"/></div></label>}
-          {isSignup && <label className="field"><span>Passwort wiederholen</span><div className="auth-input-wrap"><LockKeyhole size={16}/><input type="password" required minLength={8} autoComplete="new-password" value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)} placeholder="Passwort wiederholen"/></div></label>}
-          <button className="button-primary auth-submit" type="submit" disabled={busy}>
-            {busy ? <LoaderCircle className="spin" size={16}/> : null}
-            {busy ? 'Bitte warten …' : isSignup ? 'Account erstellen' : isReset ? 'Reset-Link senden' : 'Anmelden'}
-          </button>
-        </form>
-        <div className="auth-links">
-          {mode === 'login' && <><button onClick={() => {setMode('signup');setError('');setMessage('')}}>Neuen Account erstellen</button><button onClick={() => {setMode('reset');setError('');setMessage('')}}>Passwort vergessen?</button></>}
-          {mode !== 'login' && <button onClick={() => {setMode('login');setError('');setMessage('')}}>Zurück zur Anmeldung</button>}
-        </div>
-        <div className="auth-security"><LockKeyhole size={13}/> Jeder Account kann ausschließlich seine eigenen Produkte sehen.</div>
-      </section>
-    </main>
-  )
-}
-
-
-function PasswordRecoveryScreen({ onComplete }: { onComplete: () => void }) {
-  const [password, setPassword] = useState('')
-  const [confirmPassword, setConfirmPassword] = useState('')
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState('')
-  const [updated, setUpdated] = useState(false)
-
-  async function submit(e: React.FormEvent) {
-    e.preventDefault()
-    setError('')
-    if (password.length < 8) {
-      setError('Dein Passwort muss mindestens 8 Zeichen lang sein.')
-      return
-    }
-    if (password !== confirmPassword) {
-      setError('Die beiden Passwörter stimmen nicht überein.')
-      return
-    }
-    setBusy(true)
-    const { error: updateError } = await supabase.auth.updateUser({ password })
-    setBusy(false)
-    if (updateError) {
-      setError(friendlyAuthError(updateError))
-      return
-    }
-    setUpdated(true)
-  }
-
-  return (
-    <main className="auth-screen">
-      <section className="auth-card">
-        <div className="auth-brand"><div className="brand-symbol">r.</div><span>resell<span className="brand-muted">manager</span></span></div>
-        <div className="auth-heading">
-          <div className="overline">ACCOUNT WIEDERHERSTELLEN</div>
-          <h1>Neues Passwort festlegen</h1>
-          <p>Wähle ein neues Passwort für deinen Reselling-Manager-Account.</p>
-        </div>
-        {error && <div className="auth-message error" role="alert">{error}</div>}
-        {updated ? (
-          <>
-            <div className="auth-message success" role="status">Dein Passwort wurde erfolgreich geändert.</div>
-            <button className="button-primary auth-submit" type="button" onClick={onComplete}>Zum Dashboard</button>
-          </>
-        ) : (
-          <form className="auth-form" onSubmit={submit}>
-            <label className="field"><span>Neues Passwort</span><div className="auth-input-wrap"><LockKeyhole size={16}/><input type="password" required minLength={8} autoComplete="new-password" value={password} onChange={e => setPassword(e.target.value)} placeholder="Mindestens 8 Zeichen"/></div></label>
-            <label className="field"><span>Passwort wiederholen</span><div className="auth-input-wrap"><LockKeyhole size={16}/><input type="password" required minLength={8} autoComplete="new-password" value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)} placeholder="Passwort wiederholen"/></div></label>
-            <button className="button-primary auth-submit" type="submit" disabled={busy}>{busy ? <LoaderCircle className="spin" size={16}/> : null}{busy ? 'Bitte warten …' : 'Neues Passwort speichern'}</button>
-          </form>
-        )}
-        <div className="auth-security"><LockKeyhole size={13}/> Dein neues Passwort wird sicher bei Supabase gespeichert.</div>
-      </section>
-    </main>
-  )
-}
 
 function TrendingUpIcon() { return <ChartNoAxesCombined size={19}/> }
 
@@ -552,9 +302,8 @@ function ProductTable({ products, onEdit, onDelete }: { products: Product[]; onE
   return <div className="table-scroll"><table className="product-table"><thead><tr><th>PRODUKT</th><th>STÜCK</th><th>PLATTFORM</th><th>EINKAUF GESAMT</th><th>VERKAUF</th><th>GEWINN</th><th>STATUS</th><th/></tr></thead><tbody>{products.map(p => <tr key={p.id}><td><div className="product-name"><div className="product-thumb">{p.imageUrl ? <img src={p.imageUrl} alt={p.name}/> : <Tag size={16}/>}</div><div><strong>{p.name}</strong><span>{p.category || 'Ohne Kategorie'}{p.receiptPath ? ' · Beleg gespeichert' : ''}</span></div></div></td><td>{p.quantity || 1}</td><td>{p.platform || '–'}</td><td>{money(p.purchasePrice)}</td><td>{p.status === 'Verkauft' ? money(p.salePrice) : '–'}</td><td className={p.status === 'Verkauft' ? (profit(p) >= 0 ? 'positive' : 'negative') : 'table-muted'}>{p.status === 'Verkauft' ? money(profit(p)) : '–'}</td><td><span className={p.status === 'Verkauft' ? 'status-badge sold' : 'status-badge stock'}>{p.status}</span></td><td><div className="row-actions"><button aria-label="Bearbeiten" onClick={() => onEdit(p)}><Pencil size={15}/></button><button aria-label="Löschen" onClick={() => onDelete(p.id)}><Trash2 size={15}/></button></div></td></tr>)}</tbody></table></div>
 }
 
-function ProductModal({ product, userId, onClose, onSave }: {
+function ProductModal({ product, onClose, onSave }: {
   product: Product | null
-  userId: string
   onClose: () => void
   onSave: (products: Product[], invoiceFile?: File | null) => Promise<boolean>
 }) {
@@ -595,9 +344,14 @@ function ProductModal({ product, userId, onClose, onSave }: {
   const selectedLineQuantity = selectedLines.reduce((sum, line) => sum + Math.max(1, Number(line.quantity || 1)), 0)
 
   useEffect(() => {
-    if (!receiptPath) return
-    supabase.storage.from('product-invoices').createSignedUrl(receiptPath, 3600)
-      .then(({ data }) => setReceiptUrl(data?.signedUrl || ''))
+    let objectUrl = ''
+    if (!receiptPath) { setReceiptUrl(''); return }
+    readLocalReceipt(receiptPath).then(file => {
+      if (!file) return
+      objectUrl = URL.createObjectURL(file)
+      setReceiptUrl(objectUrl)
+    }).catch(() => setReceiptUrl(''))
+    return () => { if (objectUrl) URL.revokeObjectURL(objectUrl) }
   }, [receiptPath])
 
   async function loadImages(query: string, keepCurrent = false) {
@@ -838,7 +592,7 @@ function HelpModal({ onClose }: { onClose: () => void }) {
       <div className="help-item"><span><FileUp size={18}/></span><div><strong>Rechnung intelligent erfassen</strong><p>Die lokale Florence-2-KI liest Text und Tabellenpositionen im Browser aus. Mehrere Artikel können einzeln geprüft und gemeinsam als Produkte gespeichert werden. Falls die KI auf dem Gerät nicht läuft, springt die normale Browser-Texterkennung ein. Beim ersten Einsatz wird das KI-Modell einmalig aus dem Internet geladen (mehrere hundert MB).</p></div></div>
       <div className="help-item"><span><ImagePlus size={18}/></span><div><strong>Produktbilder</strong><p>Nach der Rechnungserkennung wird automatisch das bestplatzierte kommerziell nutzbare Bild von Openverse ausgewählt. Über „Bild ändern“ kannst du andere Bilder ansehen. Google Bilder öffnet eine separate Suche; deren erstes Ergebnis kann die App nicht automatisch auslesen.</p></div></div>
       <div className="help-item"><span><Moon size={18}/></span><div><strong>Dark Mode</strong><p>Über das Mond-/Sonnensymbol oben kannst du jederzeit zwischen dunklem und hellem Erscheinungsbild wechseln.</p></div></div>
-      <div className="help-item"><span><LockKeyhole size={18}/></span><div><strong>Private Daten</strong><p>Der Rechnungstext wird lokal im Browser verarbeitet; der Beleg wird nicht an einen KI-OCR-Dienst geschickt. Für die Bildsuche wird nur der erkannte Produktname an Openverse übermittelt. Der Originalbeleg wird erst beim Speichern in deinem privaten Cloud-Speicher abgelegt.</p></div></div>
+      <div className="help-item"><span><HardDrive size={18}/></span><div><strong>Lokale Daten</strong><p>Produkte und Originalbelege bleiben im Speicher dieses Browsers auf diesem Gerät. Es gibt keine Anmeldung, keine Cloud-Synchronisierung und keine automatische Sicherung. Für die Bildsuche wird nur der erkannte Produktname an Openverse übermittelt.</p></div></div>
     </div>
     <div className="modal-actions"><button className="button-primary" onClick={onClose}>Alles klar</button></div>
   </section></div>

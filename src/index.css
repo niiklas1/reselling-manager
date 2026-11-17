@@ -242,3 +242,48 @@ body{background:#f1eff8}
 :root[data-theme="dark"] .help-item>span{background:#31274c;color:#d4a7ff}
 :root[data-theme="dark"] .help-item strong{color:#eeeafa}
 :root[data-theme="dark"] .help-item p{color:#a1a8c0}
+
+
+/* Invoice line-item review and automatic image selection */
+.invoice-lines-panel{grid-column:1/-1;display:grid;gap:9px}
+.invoice-lines-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding:2px 0 7px}
+.invoice-lines-heading div{display:grid;gap:4px}
+.invoice-lines-heading strong{font-size:11px;color:#49536b}
+.invoice-lines-heading small{font-size:9px;color:#8b92a3;line-height:1.45}
+.invoice-lines-heading>span{font-size:9px;font-weight:800;color:#7756dc;background:#f1ecff;border-radius:20px;padding:6px 9px;white-space:nowrap}
+.invoice-line-card{border:1px solid #e7e2f0;background:#fbfaff;border-radius:10px;padding:10px;display:grid;gap:9px}
+.invoice-line-top{display:grid;grid-template-columns:18px minmax(0,1fr);align-items:center;gap:9px}
+.invoice-line-top input[type=checkbox]{width:16px;height:16px;accent-color:#7854e8}
+.invoice-line-name{min-width:0;border:1px solid #e5e0ee;background:white;color:#414c63;border-radius:7px;padding:8px 9px;font-size:10px;font-weight:700}
+.invoice-line-bottom{display:grid;grid-template-columns:75px 120px minmax(0,1fr);gap:9px;align-items:center}
+.invoice-line-bottom>label{display:grid;gap:4px}
+.invoice-line-bottom>label>span{font-size:8px;color:#858ca0}
+.invoice-line-bottom>label>input{width:100%;min-width:0;border:1px solid #e5e0ee;border-radius:7px;padding:7px 8px;background:white;color:#424d63;font-size:10px}
+.invoice-line-image{display:flex;align-items:center;gap:8px;min-width:0}
+.invoice-line-image>img,.invoice-line-no-image{width:42px;height:42px;object-fit:cover;border-radius:7px;background:#f0edf7;flex-shrink:0}
+.invoice-line-no-image{display:grid;place-items:center;color:#8b78bd}
+.invoice-line-image>div{display:grid;gap:4px;min-width:0}
+.invoice-line-image small{font-size:8px;color:#8c91a1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.invoice-line-image button,.invoice-line-options a{border:0;background:transparent;color:#7856dc;font-size:9px;font-weight:700;padding:0;text-align:left;cursor:pointer;text-decoration:none}
+.invoice-line-options{display:flex;align-items:center;gap:8px;overflow-x:auto;border-top:1px solid #eeeaf5;padding-top:8px}
+.invoice-line-options a{display:inline-flex;align-items:center;gap:4px;white-space:nowrap;padding:8px}
+.invoice-lines-total{display:flex;align-items:center;justify-content:space-between;border-top:1px solid #e7e2f0;padding:10px 2px 0;font-size:10px;color:#7f8799}
+.invoice-lines-total strong{font-size:14px;color:#5c48ac}
+.image-search-row a{display:inline-flex;align-items:center;gap:4px;color:#7856dc;font-size:9px;font-weight:700;text-decoration:none}
+.image-search-row a:hover,.invoice-line-options a:hover{text-decoration:underline}
+:root[data-theme="dark"] .invoice-lines-heading strong{color:#eeeafa}
+:root[data-theme="dark"] .invoice-lines-heading small{color:#a2a8be}
+:root[data-theme="dark"] .invoice-lines-heading>span{background:#30264d;color:#d3b7ff}
+:root[data-theme="dark"] .invoice-line-card{background:#191e34;border-color:#393653}
+:root[data-theme="dark"] .invoice-line-name,:root[data-theme="dark"] .invoice-line-bottom>label>input{background:#101629;border-color:#3d3a58;color:#e9e6f7}
+:root[data-theme="dark"] .invoice-line-bottom>label>span,:root[data-theme="dark"] .invoice-line-image small{color:#a1a7c0}
+:root[data-theme="dark"] .invoice-line-no-image{background:#282340;color:#c3a5f2}
+:root[data-theme="dark"] .invoice-line-image button,:root[data-theme="dark"] .invoice-line-options a,:root[data-theme="dark"] .image-search-row a{color:#d0adff}
+:root[data-theme="dark"] .invoice-line-options{border-color:#36324f}
+:root[data-theme="dark"] .invoice-lines-total{border-color:#3a3654;color:#a6abc2}
+:root[data-theme="dark"] .invoice-lines-total strong{color:#d8beff}
+@media(max-width:600px){
+  .invoice-line-bottom{grid-template-columns:65px minmax(90px,1fr)}
+  .invoice-line-image{grid-column:1/-1;padding-top:3px}
+  .invoice-lines-heading{flex-direction:column}
+}

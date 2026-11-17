@@ -109,8 +109,8 @@ function parseMoneyMatches(line: string): MoneyToken[] {
   })
 }
 
-const SUMMARY_START = /\b(zwischensumme|warenwert|summe\s+artikel|artikel\s*summe|subtotal|gesamtbetrag|rechnungsbetrag|endbetrag|endsumme|zu\s+zahlen|zahlbetrag|mwst|mehrwertsteuer|umsatzsteuer|steuerbetrag|vat|tax\s+total|amount\s+due|invoice\s+total|gesamt\s*brutto)\b/i
-const EXCLUDED_ROW = /\b(gesamtbetrag|rechnungsbetrag|endbetrag|endsumme|zu\s+zahlen|zahlbetrag|zwischensumme|warenwert|subtotal|summe|total|brutto|netto|mwst|ust\.?|mehrwertsteuer|umsatzsteuer|steuerbetrag|rückgeld|gegeben|kartenzahlung|barzahlung|ec[- ]?karte|kreditkarte|visa|mastercard|paypal|zahlung|bezahlt|gutschein|rabatt|versandkosten|lieferkosten|porto|pfand|kaution|anzahlung|gebühr|gebuehr|transaktionsnummer|autorisierung|terminal|kasse|kassen?nummer|kassen[- ]?nr|bonnummer|belegnummer|quittungsnummer|rechnungsnummer|kundennummer|bestellnummer|auftragsnummer|lieferant|rechnung|quittung|kassenbon|datum|uhrzeit|telefon|tel\.?|fax|email|e-mail|www\.|https?:|iban|bic|filiale|straße|str\.?|plz|adresse|kontakt|kundendienst|öffnungszeiten|oeffnungszeiten|artikelnummer|art\.?\s*nr|sku|ean|gtin|barcode|referenz|reference|transaction\s*(?:id|no|number)|tracking\s*(?:id|no|number)|customer\s*(?:id|no|number)|shipping|delivery|freight|order\s*(?:no|number)|invoice\s*(?:no|number)|page\s+\d|seite\s+\d)\b/i
+const SUMMARY_START = /\b(zwischensumme|warenwert|summe(?:\s+artikel)?|artikel\s*summe|subtotal|gesamtbetrag|rechnungsbetrag|endbetrag|endsumme|zu\s+zahlen|zahlbetrag|mwst|mehrwertsteuer|umsatzsteuer|steuerbetrag|vat|tax\s+total|amount\s+due|invoice\s+total|gesamt\s*brutto)\b/i
+const EXCLUDED_ROW = /\b(gesamtbetrag|rechnungsbetrag|endbetrag|endsumme|zu\s+zahlen|zahlbetrag|zwischensumme|warenwert|subtotal|summe|total|brutto|netto|mwst|ust\.?|mehrwertsteuer|umsatzsteuer|steuerbetrag|rückgeld|gegeben|kartenzahlung|barzahlung|ec[- ]?karte|ec\s+cash|girocard|contactless|kreditkarte|visa|mastercard|paypal|zahlung|bezahlt|gutschein|rabatt|versandkosten|lieferkosten|porto|pfand|kaution|anzahlung|gebühr|gebuehr|transaktionsnummer|autorisierung|terminal|kasse|kassen?nummer|kassen[- ]?nr|bonnummer|belegnummer|quittungsnummer|rechnungsnummer|kundennummer|bestellnummer|auftragsnummer|lieferant|rechnung|quittung|kassenbon|datum|uhrzeit|telefon|tel\.?|fax|email|e-mail|www\.|https?:|iban|bic|filiale|straße|str\.?|plz|adresse|kontakt|kundendienst|öffnungszeiten|oeffnungszeiten|artikelnummer|art\.?\s*nr|sku|ean|gtin|barcode|referenz|reference|transaction\s*(?:id|no|number)|tracking\s*(?:id|no|number)|customer\s*(?:id|no|number)|shipping|delivery|freight|order\s*(?:no|number)|invoice\s*(?:no|number)|page\s+\d|seite\s+\d)\b/i
 const TABLE_HEADER_WORDS = /\b(artikel|produkt|beschreibung|bezeichnung|item|description|menge|quantity|qty|anzahl|stück|stk|einzelpreis|stückpreis|unit\s*price|preis|price|betrag|amount|gesamtpreis|line\s*total)\b/i
 
 function detectTableHeader(lines: string[]): number {
@@ -321,31 +321,48 @@ async function recognizeWithBestEngine(
   image: Blob,
   onProgress: (value: number, stage: string) => void,
 ): Promise<{ text: string; recognition: 'local-ai' | 'browser-ocr'; backend: string }> {
+  // Tesseract is deliberately tried first: on narrow thermal receipts it often
+  // preserves the printed item row and the SUMME/payment boundary better than
+  // region-generating vision models. Previously any non-empty Florence output
+  // won, even when it consisted mostly of misread payment-terminal metadata.
+  let tesseractError: unknown
+  const objectUrl = URL.createObjectURL(image)
+  try {
+    const img = new Image()
+    img.src = objectUrl
+    await img.decode()
+    const canvas = document.createElement('canvas')
+    const scale = Math.min(3, 3000 / Math.max(img.naturalWidth, img.naturalHeight))
+    canvas.width = Math.round(img.naturalWidth * scale)
+    canvas.height = Math.round(img.naturalHeight * scale)
+    const context = canvas.getContext('2d', { willReadFrequently: true })
+    if (!context) throw new Error('Texterkennung konnte nicht gestartet werden.')
+    context.fillStyle = '#fff'
+    context.fillRect(0, 0, canvas.width, canvas.height)
+    context.imageSmoothingEnabled = true
+    context.imageSmoothingQuality = 'high'
+    context.drawImage(img, 0, 0, canvas.width, canvas.height)
+    onProgress(0.12, 'Kassenbon und Tabellen werden gelesen')
+    const text = await recognizeCanvas(canvas, value => onProgress(0.12 + value * 0.68, 'Texterkennung läuft'))
+    if (text.trim() && parseLineItems(text.split(/\\r?\\n/).map(line => line.trim()).filter(Boolean)).length > 0) {
+      return { text, recognition: 'browser-ocr', backend: 'Tesseract.js (Belegprüfung)' }
+    }
+    tesseractError = new Error('Die erste Texterkennung fand keine plausible Artikelposition.')
+  } catch (error) {
+    tesseractError = error
+  } finally {
+    URL.revokeObjectURL(objectUrl)
+  }
+
+  onProgress(0.84, 'Zweite Erkennung mit lokaler KI')
   try {
     const result: FlorenceOcrResult = await recognizeInvoiceWithAI(image, onProgress)
-    const text = positionedLines(result.labels, result.boxes).join('\n')
+    const text = positionedLines(result.labels, result.boxes).join('\\n')
     if (!text.trim()) throw new Error('Die lokale KI hat keinen lesbaren Text erkannt.')
     return { text, recognition: 'local-ai', backend: result.backend }
   } catch (aiError) {
-    onProgress(0.9, 'Lokale KI nicht verfügbar – nutze einfache Browser-Texterkennung')
-    const objectUrl = URL.createObjectURL(image)
-    try {
-      const img = new Image()
-      img.src = objectUrl
-      await img.decode()
-      const canvas = document.createElement('canvas')
-      const scale = Math.min(2, 2200 / Math.max(img.naturalWidth, img.naturalHeight))
-      canvas.width = Math.round(img.naturalWidth * scale)
-      canvas.height = Math.round(img.naturalHeight * scale)
-      const context = canvas.getContext('2d')
-      if (!context) throw aiError
-      context.drawImage(img, 0, 0, canvas.width, canvas.height)
-      const text = await recognizeCanvas(canvas, value => onProgress(0.9 + value * 0.1, 'Texterkennung läuft'))
-      if (!text.trim()) throw aiError
-      return { text, recognition: 'browser-ocr', backend: 'Tesseract.js' }
-    } finally {
-      URL.revokeObjectURL(objectUrl)
-    }
+    if (tesseractError instanceof Error) throw new Error(tesseractError.message + ' ' + (aiError instanceof Error ? aiError.message : ''))
+    throw aiError
   }
 }
 

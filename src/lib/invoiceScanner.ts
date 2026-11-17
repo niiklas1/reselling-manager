@@ -310,9 +310,9 @@ function parseLineItems(lines: string[]): InvoiceLineItem[] {
     pendingBarcode = undefined
   }
 
-  const subtotal = findSummaryAmount(lines, /\\b(zwischensumme|warenwert|summe\\s+artikel|artikel\\s*summe|subtotal)\\b/i)
+  const subtotal = findSummaryAmount(lines, /\b(zwischensumme|warenwert|summe\s+artikel|artikel\s*summe|subtotal)\b/i)
   if (subtotal !== null) return selectCandidatesAgainstSubtotal(result, subtotal)
-  const grandTotal = findSummaryAmount(lines, /\\b(gesamtbetrag|rechnungsbetrag|endbetrag|endsumme|zu\\s+zahlen|zahlbetrag|invoice\\s+total|amount\\s+due)\\b/i)
+  const grandTotal = findSummaryAmount(lines, /\b(gesamtbetrag|rechnungsbetrag|endbetrag|endsumme|zu\s+zahlen|zahlbetrag|invoice\s+total|amount\s+due)\b/i)
   return grandTotal !== null ? selectCandidatesAgainstSubtotal(result, grandTotal) : result
 }
 function parseTotal(text: string): number | null {

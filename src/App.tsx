@@ -120,6 +120,28 @@ async function deleteLocalReceipt(path: string): Promise<void> {
   })
 }
 
+
+type BackupReceipt = { name: string; type: string; data: string }
+type ResellingBackup = { format: 'reselling-manager-backup'; version: 1; createdAt: string; products: Product[]; receipts: Record<string, BackupReceipt> }
+
+function blobToDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(String(reader.result))
+    reader.onerror = () => reject(new Error('Ein Beleg konnte nicht für das Backup gelesen werden.'))
+    reader.readAsDataURL(blob)
+  })
+}
+
+function dataUrlToBlob(dataUrl: string): Blob {
+  const match = /^data:([^;,]*);base64,([A-Za-z0-9+/=]+)$/.exec(dataUrl)
+  if (!match) throw new Error('Die Backup-Datei enthält einen ungültigen Beleg.')
+  const binary = atob(match[2])
+  const bytes = new Uint8Array(binary.length)
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
+  return new Blob([bytes], { type: match[1] || 'application/octet-stream' })
+}
+
 function App() {
   const [section, setSection] = useState<Section>('Übersicht')
   const [dataError, setDataError] = useState('')
@@ -130,6 +152,9 @@ function App() {
   const [editing, setEditing] = useState<Product | null>(null)
   const [mobileNav, setMobileNav] = useState(false)
   const [showHelp, setShowHelp] = useState(false)
+  const [backupBusy, setBackupBusy] = useState(false)
+  const [backupMessage, setBackupMessage] = useState('')
+  const backupInput = useRef<HTMLInputElement>(null)
   const [theme, setTheme] = useState<'light' | 'dark'>(() => {
     const saved = localStorage.getItem('reselling-theme')
     return saved === 'light' ? 'light' : 'dark'
@@ -148,6 +173,72 @@ function App() {
     }
   }, [products])
 
+
+
+  async function createBackup() {
+    setBackupBusy(true)
+    setBackupMessage('')
+    try {
+      const receipts: Record<string, BackupReceipt> = {}
+      const receiptPaths = [...new Set(products.map(product => product.receiptPath).filter(path => path.startsWith('local:')))]
+      for (const path of receiptPaths) {
+        const blob = await readLocalReceipt(path)
+        if (!blob) throw new Error('Ein gespeicherter Beleg fehlt. Das Backup wurde abgebrochen, damit es nicht unvollständig ist.')
+        const name = blob instanceof File ? blob.name : 'beleg'
+        receipts[path] = { name, type: blob.type || 'application/octet-stream', data: await blobToDataUrl(blob) }
+      }
+      const backup: ResellingBackup = { format: 'reselling-manager-backup', version: 1, createdAt: new Date().toISOString(), products, receipts }
+      const blob = new Blob([JSON.stringify(backup)], { type: 'application/json' })
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = 'reselling-manager-backup-' + new Date().toISOString().slice(0, 10) + '.json'
+      document.body.appendChild(link)
+      link.click()
+      link.remove()
+      URL.revokeObjectURL(url)
+      setBackupMessage('Backup erstellt: ' + products.length + ' Produkte und ' + receiptPaths.length + ' Belege gesichert.')
+    } catch (error) {
+      setBackupMessage(error instanceof Error ? error.message : 'Backup konnte nicht erstellt werden.')
+    } finally {
+      setBackupBusy(false)
+    }
+  }
+
+  async function restoreBackup(file?: File) {
+    if (!file) return
+    setBackupBusy(true)
+    setBackupMessage('')
+    try {
+      const parsed = JSON.parse(await file.text()) as Partial<ResellingBackup>
+      if (parsed.format !== 'reselling-manager-backup' || parsed.version !== 1 || !Array.isArray(parsed.products) || !parsed.receipts || typeof parsed.receipts !== 'object') {
+        throw new Error('Diese Datei ist kein gültiges Reselling-Manager-Backup.')
+      }
+      if (!window.confirm('Das Backup ersetzt alle aktuell gespeicherten Produkte und Belege. Möchtest du fortfahren?')) return
+      const newPaths: Record<string, string> = {}
+      for (const [oldPath, receipt] of Object.entries(parsed.receipts)) {
+        if (!receipt || typeof receipt.data !== 'string' || typeof receipt.name !== 'string' || typeof receipt.type !== 'string') {
+          throw new Error('Das Backup enthält einen beschädigten Beleg. Deine bisherigen Daten bleiben erhalten.')
+        }
+        const blob = dataUrlToBlob(receipt.data)
+        newPaths[oldPath] = await saveLocalReceipt(new File([blob], receipt.name, { type: receipt.type }))
+      }
+      const restored = parsed.products.map(product => {
+        if (!product || typeof product.id !== 'string' || typeof product.name !== 'string') throw new Error('Das Backup enthält ungültige Produktdaten.')
+        const oldPath = typeof product.receiptPath === 'string' ? product.receiptPath : ''
+        if (oldPath.startsWith('local:') && !newPaths[oldPath]) throw new Error('Zu einem Produkt fehlt ein Beleg im Backup. Deine bisherigen Daten bleiben erhalten.')
+        return { ...product, receiptPath: newPaths[oldPath] || '' } as Product
+      })
+      localStorage.setItem(PRODUCTS_STORAGE_KEY, JSON.stringify(restored))
+      setProducts(restored)
+      setBackupMessage('Wiederherstellung erfolgreich: ' + restored.length + ' Produkte und ' + Object.keys(newPaths).length + ' Belege importiert.')
+    } catch (error) {
+      setBackupMessage(error instanceof Error ? error.message : 'Backup konnte nicht wiederhergestellt werden.')
+    } finally {
+      setBackupBusy(false)
+      if (backupInput.current) backupInput.current.value = ''
+    }
+  }
 
   const sold = products.filter(p => p.status === 'Verkauft')
   const stock = products.filter(p => p.status === 'Auf Lager')
@@ -276,7 +367,7 @@ function App() {
           )}
 
           {section === 'Auswertungen' && <section className="panel coming-panel"><div className="coming-icon"><Sparkles size={23}/></div><h2>Auswertungen</h2><p>Hier bauen wir deine Monatsübersichten, Gewinnentwicklung und Plattformvergleiche auf.</p><span className="coming-tag">WIRD ALS NÄCHSTES ERWEITERT</span></section>}
-          {section === 'Einstellungen' && <section className="panel settings-panel"><div className="panel-title-row"><div><h2>Lokaler Workspace</h2><p>Die App läuft ohne Konto, Anmeldung oder E-Mail-Versand.</p></div></div><div className="setting-row"><div><strong>Betriebsmodus</strong><span>Persönliche Nutzung auf diesem Gerät.</span></div><span className="setting-pill">Ohne Login</span></div><div className="setting-row"><div><strong>Erscheinungsbild</strong><span>Zwischen dem dunklen Neon-Look und dem hellen Design wechseln.</span></div><button className="setting-toggle" onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}>{theme === 'dark' ? <Sun size={15}/> : <Moon size={15}/>} {theme === 'dark' ? 'Helles Design' : 'Dark Mode'}</button></div><div className="setting-row"><div><strong>Datenspeicherung</strong><span>Produkte werden nur in diesem Browser gespeichert. Es gibt keine Cloud-Synchronisierung.</span></div><span className="setting-pill">Lokal</span></div><div className="setting-row"><div><strong>Belege</strong><span>PDFs und Bilder werden im lokalen Browserspeicher dieses Geräts abgelegt.</span></div><span className="setting-pill">Auf diesem Gerät</span></div><div className="setting-row"><div><strong>Währung</strong><span>Alle Beträge werden in Euro angezeigt.</span></div><span className="setting-pill">EUR (€)</span></div><div className="setting-row"><div><strong>App-Version</strong><span>Reselling Manager – Invoice Studio</span></div><span className="setting-pill">0.3.0 Local</span></div></section>}
+          {section === 'Einstellungen' && <section className="panel settings-panel"><div className="panel-title-row"><div><h2>Lokaler Workspace</h2><p>Die App läuft ohne Konto, Anmeldung oder E-Mail-Versand.</p></div></div><div className="setting-row"><div><strong>Betriebsmodus</strong><span>Persönliche Nutzung auf diesem Gerät.</span></div><span className="setting-pill">Ohne Login</span></div><div className="setting-row"><div><strong>Erscheinungsbild</strong><span>Zwischen dem dunklen Neon-Look und dem hellen Design wechseln.</span></div><button className="setting-toggle" onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}>{theme === 'dark' ? <Sun size={15}/> : <Moon size={15}/>} {theme === 'dark' ? 'Helles Design' : 'Dark Mode'}</button></div><div className="setting-row"><div><strong>Datenspeicherung</strong><span>Produkte werden nur in diesem Browser gespeichert. Es gibt keine Cloud-Synchronisierung.</span></div><span className="setting-pill">Lokal</span></div><div className="setting-row"><div><strong>Belege</strong><span>PDFs und Bilder werden im lokalen Browserspeicher dieses Geräts abgelegt.</span></div><span className="setting-pill">Auf diesem Gerät</span></div><div className="backup-section"><div className="backup-heading"><div><strong>Backup erstellen</strong><span>Sichere alle Produkte und Originalbelege in einer Datei. Die Datei kannst du später hier wieder hochladen.</span></div><HardDrive size={20}/></div><div className="backup-actions"><button className="button-primary" onClick={() => void createBackup()} disabled={backupBusy}><ArrowDownToLine size={15}/>{backupBusy ? 'Bitte warten …' : 'Backup-Datei erstellen'}</button><button className="button-secondary" onClick={() => backupInput.current?.click()} disabled={backupBusy}><FileUp size={15}/> Backup hochladen</button><input ref={backupInput} type="file" accept=".json,application/json" hidden onChange={e => void restoreBackup(e.target.files?.[0])}/></div>{backupMessage && <p className="backup-message" role="status">{backupMessage}</p>}<small>Wichtig: Beim Wiederherstellen werden die aktuellen Daten durch den Inhalt des Backups ersetzt.</small></div><div className="setting-row"><div><strong>Währung</strong><span>Alle Beträge werden in Euro angezeigt.</span></div><span className="setting-pill">EUR (€)</span></div><div className="setting-row"><div><strong>App-Version</strong><span>Reselling Manager – Invoice Studio</span></div><span className="setting-pill">0.3.0 Local</span></div></section>}
           <footer className="page-footer">Reselling Manager <span>·</span> Einfach den Überblick behalten.</footer>
         </div>
       </main>

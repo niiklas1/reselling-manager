@@ -322,3 +322,14 @@ body{background:#f1eff8}
 
 .sale-action{display:inline-flex!important;align-items:center;gap:4px;white-space:nowrap;color:#7856dc!important;font-size:8px;font-weight:700}
 :root[data-theme="dark"] .sale-action{color:#d0adff!important}
+
+
+/* Profile toggle, selectable currency and original receipt shortcut */
+.profile-card[aria-expanded="true"] .profile-chevron{transform:rotate(180deg)}
+.receipt-link{display:inline-flex;align-items:center;gap:4px;margin-top:5px;padding:0;border:0;background:transparent;color:#7856dc;font-size:9px;font-weight:700;line-height:1.4}
+.receipt-link:hover{text-decoration:underline}
+.setting-select{min-width:155px;height:34px;padding:0 10px;border:1px solid #e5e8ed;border-radius:7px;background:#fff;color:#394454;font-size:10px;outline:none}
+.setting-select:focus{border-color:#8194b1;box-shadow:0 0 0 3px #8094b11a}
+:root[data-theme="dark"] .receipt-link{color:#d0adff}
+:root[data-theme="dark"] .setting-select{background:#171b30;border-color:#3d3a58;color:#e9e6f7}
+@media(max-width:600px){.setting-row{gap:10px}.setting-select{min-width:125px;max-width:46%}}

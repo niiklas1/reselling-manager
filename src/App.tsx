@@ -567,6 +567,10 @@ function App() {
   const [cloudSyncState, setCloudSyncState] = useState<'idle' | 'saving' | 'synced' | 'error'>('idle')
   const [cloudLoadRetry, setCloudLoadRetry] = useState(0)
   const [cloudSyncRetry, setCloudSyncRetry] = useState(0)
+  const [localMigrationProducts, setLocalMigrationProducts] = useState<Product[]>([])
+  const [localMigrationSettings, setLocalMigrationSettings] = useState<{ currency: string; theme: 'light' | 'dark'; gmailClientId: string; gmailLearningHints: GmailLearningHint[] } | null>(null)
+  const [localMigrationBusy, setLocalMigrationBusy] = useState(false)
+  const [localMigrationMessage, setLocalMigrationMessage] = useState('')
   const [products, setProducts] = useState<Product[]>([])
   const [gmailClientId, setGmailClientId] = useState('')
   const [gmailLearningHints, setGmailLearningHints] = useState<GmailLearningHint[]>([])
@@ -668,12 +672,129 @@ function App() {
     }
   }
 
+  async function importLocalDataToCloud() {
+    if (!userId || !cloudReady || localMigrationProducts.length === 0 || localMigrationBusy) return
+    if (!window.confirm(
+      'Auf diesem Gerät liegen noch ' + localMigrationProducts.length +
+      ' lokal gespeicherte Produkte aus der früheren App-Version. Diese Daten waren nicht an ein Konto gebunden. ' +
+      'Möchtest du sie jetzt in das aktuell angemeldete Konto importieren? Bestehende Cloud-Produkte bleiben erhalten.'
+    )) return
+
+    setLocalMigrationBusy(true)
+    setLocalMigrationMessage('')
+    const uploadedReceiptPaths: string[] = []
+    const insertedProductIds: string[] = []
+    try {
+      const { data: currentRows, error: currentError } = await supabase
+        .from('products')
+        .select('id')
+        .eq('user_id', userId)
+        .is('deleted_at', null)
+      if (currentError) throw currentError
+
+      const existingIds = new Set((currentRows || []).map((row: { id: string }) => row.id))
+      const candidates = localMigrationProducts.filter(product => !existingIds.has(product.id))
+      const receiptPathByLocalPath = new Map<string, string>()
+
+      for (const product of candidates) {
+        const localPath = product.receiptPath || ''
+        if (!localPath) continue
+        if (!localPath.startsWith('local:')) {
+          throw new Error('Ein lokaler Datensatz verweist auf einen unbekannten Belegspeicher. Bitte erstelle vor dem Import ein Backup in der bisherigen App-Version.')
+        }
+        if (receiptPathByLocalPath.has(localPath)) continue
+        const blob = await readLocalReceipt(localPath)
+        if (!blob) throw new Error('Ein zugeordneter Originalbeleg fehlt im lokalen Gerätespeicher. Der Import wurde abgebrochen, damit keine Produktdaten unvollständig übertragen werden.')
+        const fileName = 'beleg-' + crypto.randomUUID() + (blob.type === 'application/pdf' ? '.pdf' : blob.type === 'image/jpeg' ? '.jpg' : blob.type === 'image/png' ? '.png' : blob.type === 'image/webp' ? '.webp' : blob.type === 'image/heic' ? '.heic' : '')
+        const uploaded = await uploadCloudReceipt(userId, new File([blob], fileName, { type: blob.type || 'application/octet-stream' }))
+        uploadedReceiptPaths.push(uploaded)
+        receiptPathByLocalPath.set(localPath, uploaded)
+      }
+
+      const importRows = candidates.map(product => {
+        const localPath = product.receiptPath || ''
+        if (localPath.startsWith('local:') && !receiptPathByLocalPath.has(localPath)) {
+          throw new Error('Ein Originalbeleg konnte nicht dem Produkt zugeordnet werden.')
+        }
+        return productToCloudRow({
+          ...product,
+          receiptPath: localPath ? (receiptPathByLocalPath.get(localPath) || '') : '',
+        }, userId)
+      })
+
+      for (let index = 0; index < importRows.length; index += 100) {
+        const batch = importRows.slice(index, index + 100)
+        const { error } = await supabase.from('products').upsert(batch, { onConflict: 'id' })
+        if (error) throw error
+        insertedProductIds.push(...batch.map(row => row.id))
+      }
+
+      if (localMigrationSettings) {
+        const { error } = await supabase.from('user_settings').upsert({
+          user_id: userId,
+          currency: localMigrationSettings.currency,
+          theme: localMigrationSettings.theme,
+          gmail_client_id: localMigrationSettings.gmailClientId,
+          gmail_learning_hints: localMigrationSettings.gmailLearningHints,
+          updated_at: new Date().toISOString(),
+        }, { onConflict: 'user_id' })
+        if (error) throw error
+      }
+
+      const [productsResult, settingsResult] = await Promise.all([
+        supabase.from('products').select('*').eq('user_id', userId).is('deleted_at', null).order('created_at', { ascending: false }),
+        supabase.from('user_settings').select('*').eq('user_id', userId).maybeSingle(),
+      ])
+      if (productsResult.error) throw productsResult.error
+      if (settingsResult.error) throw settingsResult.error
+
+      const mergedProducts = ((productsResult.data || []) as CloudProductRow[]).map(cloudRowToProduct)
+      const savedSettings = settingsResult.data
+      syncedProductsRef.current = mergedProducts
+      setProducts(mergedProducts)
+      if (savedSettings) {
+        setCurrency(['EUR', 'USD', 'GBP', 'CHF'].includes(savedSettings.currency) ? savedSettings.currency : 'EUR')
+        setTheme(savedSettings.theme === 'light' ? 'light' : 'dark')
+        setGmailClientId(savedSettings.gmail_client_id || '')
+        setGmailLearningHints(Array.isArray(savedSettings.gmail_learning_hints) ? savedSettings.gmail_learning_hints as GmailLearningHint[] : [])
+        settingsSnapshotRef.current = JSON.stringify({
+          currency: ['EUR', 'USD', 'GBP', 'CHF'].includes(savedSettings.currency) ? savedSettings.currency : 'EUR',
+          theme: savedSettings.theme === 'light' ? 'light' : 'dark',
+          gmailClientId: savedSettings.gmail_client_id || '',
+          gmailLearningHints: Array.isArray(savedSettings.gmail_learning_hints) ? savedSettings.gmail_learning_hints : [],
+        })
+      }
+      setLocalMigrationProducts([])
+      setLocalMigrationSettings(null)
+      setCloudSyncState('synced')
+      setLocalMigrationMessage(
+        candidates.length
+          ? candidates.length + ' lokale Produkte und ' + uploadedReceiptPaths.length + ' Originalbelege wurden importiert. Deine bisherigen lokalen Daten bleiben als zusätzliche Sicherung auf diesem Gerät erhalten.'
+          : 'Alle lokalen Produkte waren bereits im Cloud-Konto vorhanden. Es wurden keine Duplikate erstellt.'
+      )
+    } catch (error) {
+      if (insertedProductIds.length) {
+        await supabase.from('products')
+          .update({ deleted_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+          .eq('user_id', userId)
+          .in('id', insertedProductIds)
+      }
+      await Promise.all(uploadedReceiptPaths.map(path => deleteProductReceipt(path).catch(() => undefined)))
+      setLocalMigrationMessage(error instanceof Error ? error.message : 'Der Import lokaler Daten ist fehlgeschlagen.')
+    } finally {
+      setLocalMigrationBusy(false)
+    }
+  }
+
   useEffect(() => {
     if (!userId) {
       loadedUserIdRef.current = null
       syncedProductsRef.current = []
       settingsSnapshotRef.current = ''
       setProducts([])
+      setLocalMigrationProducts([])
+      setLocalMigrationSettings(null)
+      setLocalMigrationMessage('')
       setCloudReady(false)
       setCloudLoadingError('')
       setCloudSyncState('idle')
@@ -686,6 +807,9 @@ function App() {
     setCloudLoadingError('')
     setCloudSyncError('')
     setProducts([])
+    setLocalMigrationProducts([])
+    setLocalMigrationSettings(null)
+    setLocalMigrationMessage('')
     syncedProductsRef.current = []
 
     async function loadAccountData() {
@@ -699,6 +823,32 @@ function App() {
 
       const rows = (productsResult.data || []) as CloudProductRow[]
       const loadedProducts = rows.map(cloudRowToProduct)
+      // The old release stored inventory in localStorage and receipts in IndexedDB.
+      // Offer an explicit, additive migration only if this account has no cloud rows.
+      // Legacy local data is not inherently account-scoped, so the user must confirm it.
+      const legacyProducts = rows.length === 0 ? readStoredProducts() : []
+      setLocalMigrationProducts(legacyProducts)
+      if (legacyProducts.length > 0 && !settingsResult.data) {
+        let legacyHints: GmailLearningHint[] = []
+        try {
+          const parsed = JSON.parse(localStorage.getItem('reselling-gmail-learning-v1') || '[]')
+          legacyHints = Array.isArray(parsed) ? parsed.filter((item: unknown) => {
+            if (!item || typeof item !== 'object') return false
+            const hint = item as GmailLearningHint
+            return typeof hint.senderDomain === 'string' && typeof hint.productId === 'string' &&
+              (hint.direction === 'incoming' || hint.direction === 'outgoing') &&
+              Array.isArray(hint.subjectTokens) && typeof hint.approvedAt === 'string'
+          }).slice(0, 100) : []
+        } catch { legacyHints = [] }
+        setLocalMigrationSettings({
+          currency: ['EUR', 'USD', 'GBP', 'CHF'].includes(localStorage.getItem('reselling-currency') || '') ? localStorage.getItem('reselling-currency')! : 'EUR',
+          theme: localStorage.getItem('reselling-theme') === 'light' ? 'light' : 'dark',
+          gmailClientId: localStorage.getItem('reselling-gmail-client-id') || '',
+          gmailLearningHints: legacyHints,
+        })
+      } else {
+        setLocalMigrationSettings(null)
+      }
       const settings = settingsResult.data || {
         currency: 'EUR',
         theme: 'dark',
@@ -743,6 +893,13 @@ function App() {
 
     return () => { active = false }
   }, [userId, cloudLoadRetry])
+
+  useEffect(() => {
+    if (!userId) return
+    const retryCloudSync = () => setCloudSyncRetry(value => value + 1)
+    window.addEventListener('online', retryCloudSync)
+    return () => window.removeEventListener('online', retryCloudSync)
+  }, [userId])
 
   useEffect(() => {
     if (!userId || !cloudReady || loadedUserIdRef.current !== userId) return
@@ -1268,6 +1425,11 @@ function App() {
         <div className="page-wrap">
           {dataError && <div className="app-alert error" role="alert">{dataError}</div>}
           {cloudSyncError && <div className="app-alert error" role="alert">Cloud-Synchronisierung fehlgeschlagen: {cloudSyncError} <button type="button" onClick={() => { setCloudSyncError(''); setCloudSyncRetry(value => value + 1) }}>Erneut versuchen</button></div>}
+          {localMigrationProducts.length > 0 && <section className="local-migration-card" aria-labelledby="local-migration-title">
+            <div><strong id="local-migration-title">Lokale Daten auf diesem Gerät gefunden</strong><p>{localMigrationProducts.length} Produkte aus der bisherigen App-Version sind noch nicht mit deinem Konto verbunden. Du kannst sie ergänzend importieren. Dabei werden vorhandene Cloud-Produkte nicht überschrieben; lokale Daten werden nicht vom Gerät gelöscht.</p></div>
+            <button className="button-primary" type="button" onClick={() => void importLocalDataToCloud()} disabled={localMigrationBusy}>{localMigrationBusy ? 'Daten werden importiert …' : 'Lokale Produkte ins Konto importieren'}</button>
+          </section>}
+          {localMigrationMessage && <div className={localMigrationProducts.length ? 'app-alert info' : 'app-alert success'} role="status">{localMigrationMessage}</div>}
           {section === 'Übersicht' && (
             <>
               <div className="page-header"><div><div className="overline">DEIN BUSINESS AUF EINEN BLICK</div><h1>Übersicht</h1><p>Willkommen zurück. Hier ist dein aktueller Überblick.</p></div><button className="button-primary" onClick={openNew}><Plus size={17}/> Produkt hinzufügen</button></div>

@@ -1098,7 +1098,7 @@ function App() {
       }
 
       if (!restoredProducts.every(product => product && typeof product.id === 'string' && typeof product.name === 'string')) throw new Error('Das Backup enthält ungültige Produktdaten.')
-      if (!window.confirm('Das Backup ersetzt alle aktuell gespeicherten Produkte, Einstellungen und Originalbelege. Möchtest du fortfahren?')) return
+      if (!window.confirm('Die Produkte aus dem Backup werden mit deinem aktuellen Cloud-Bestand zusammengeführt. Bestehende Produkte mit gleicher ID werden durch die Backup-Version aktualisiert. Andere Produkte bleiben erhalten. Möchtest du fortfahren?')) return
 
       if (!userId || loadedUserIdRef.current !== userId) throw new Error('Du musst angemeldet sein, um ein Backup wiederherzustellen.')
       const newPaths: Record<string, string> = {}
@@ -1151,29 +1151,31 @@ function App() {
         const { error } = await supabase.from('products').upsert(productRows, { onConflict: 'id' })
         if (error) throw error
       }
-      const { data: existingRows, error: readExistingError } = await supabase.from('products').select('id').eq('user_id', userId)
-      if (readExistingError) throw readExistingError
-      const restoredIds = new Set(finalProducts.map(product => product.id))
-      const obsoleteIds = (existingRows || []).map((row: { id: string }) => row.id).filter((id: string) => !restoredIds.has(id))
-      if (obsoleteIds.length) {
-        const { error } = await supabase.from('products').update({ deleted_at: new Date().toISOString(), updated_at: new Date().toISOString() }).eq('user_id', userId).in('id', obsoleteIds)
-        if (error) throw error
-      }
+      // Merge the imported backup into the current account instead of deleting
+      // records not present in this file. This also allows backups from multiple
+      // devices to be restored one after another without losing earlier imports.
+      const { data: mergedRows, error: readMergedError } = await supabase.from('products')
+        .select('*')
+        .eq('user_id', userId)
+        .is('deleted_at', null)
+        .order('created_at', { ascending: false })
+      if (readMergedError) throw readMergedError
+      const mergedProducts = ((mergedRows || []) as CloudProductRow[]).map(cloudRowToProduct)
 
       setCurrency(restoredSettings.currency)
       setTheme(restoredSettings.theme)
       setGmailClientId(restoredSettings.gmailClientId)
       setGmailLearningHints(restoredSettings.gmailLearningHints)
-      syncedProductsRef.current = finalProducts
+      syncedProductsRef.current = mergedProducts
       settingsSnapshotRef.current = JSON.stringify(restoredSettings)
-      setProducts(finalProducts)
+      setProducts(mergedProducts)
       restoreCommitted = true
-      const nextReceiptPaths = new Set(finalProducts.map(item => item.receiptPath).filter(Boolean))
+      const nextReceiptPaths = new Set(mergedProducts.map(item => item.receiptPath).filter(Boolean))
       const obsoleteReceiptPaths = [...new Set(previousProducts.map(item => item.receiptPath).filter(Boolean))]
         .filter(path => !nextReceiptPaths.has(path))
       await Promise.all(obsoleteReceiptPaths.map(path => deleteProductReceipt(path).catch(() => undefined)))
       setCloudSyncState('synced')
-      setBackupMessage('Wiederherstellung erfolgreich: ' + finalProducts.length + ' Produkte und ' + Object.keys(newPaths).length + ' Originalbelege in dein Cloud-Konto importiert.')
+      setBackupMessage('Backup erfolgreich zusammengeführt: ' + finalProducts.length + ' Produkte importiert, ' + mergedProducts.length + ' Produkte insgesamt im Konto. ' + Object.keys(newPaths).length + ' Originalbelege wurden übertragen.')
     } catch (error) {
       let rollbackFailed = false
       if (!restoreCommitted && restoreDatabaseStarted && userId) {

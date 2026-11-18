@@ -280,7 +280,7 @@ function extractLinks(html: string, text: string): Array<{ url: string; label: s
       links.push({ url: (anchor.getAttribute('href') || '').trim(), label, context })
     })
   }
-  for (const match of text.matchAll(/https?:\\/\\/[^\\s<>"']+/gi)) {
+  for (const match of text.matchAll(/https?:\/\/[^\s<>"']+/gi)) {
     links.push({ url: match[0].replace(/[),.;!?]+$/g, ''), label: '', context: '' })
   }
   return links

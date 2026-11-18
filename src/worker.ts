@@ -10,6 +10,8 @@ interface Env {
   EBAY_CLIENT_SECRET?: string
   EBAY_RU_NAME?: string
   EBAY_TOKEN_ENCRYPTION_KEY?: string
+  TRACKING_17TRACK_API_TOKEN?: string
+  TRACKING_17TRACK_WEBHOOK_SECRET?: string
 }
 
 type MatchCandidate = {
@@ -985,6 +987,379 @@ async function ebayDisconnect(request: Request, env: Env): Promise<Response> {
   }
 }
 
+
+type ShippingProductRow = {
+  id: string
+  name: string
+  status: string
+  sale_date: string | null
+  incoming_carrier: string | null
+  incoming_tracking_number: string | null
+  incoming_tracking_url: string | null
+  outgoing_carrier: string | null
+  outgoing_tracking_number: string | null
+  outgoing_tracking_url: string | null
+}
+type ShippingTrackingRow = {
+  id: string
+  user_id: string
+  product_id: string
+  direction: 'incoming' | 'outgoing'
+  tracking_number: string
+  carrier: string
+  tracking_url: string
+  provider: string
+  provider_carrier: number | null
+  provider_registered: boolean
+  tracking_status: string
+  provider_status: string | null
+  provider_sub_status: string | null
+  latest_event: string | null
+  latest_location: string | null
+  latest_event_at: string | null
+  estimated_delivery_from: string | null
+  estimated_delivery_to: string | null
+  last_synced_at: string | null
+  tracking_error: string | null
+  updated_at: string
+}
+type TrackingApiRecord = Record<string, unknown>
+type TrackingApiResponse = {
+  code?: number
+  data?: {
+    accepted?: TrackingApiRecord[]
+    rejected?: Array<{ number?: string; error?: { code?: number; message?: string } }>
+  }
+}
+
+function trackingObject(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {}
+}
+function trackingString(value: unknown, maxLength = 500): string {
+  return typeof value === 'string' ? value.replace(/\s+/g, ' ').trim().slice(0, maxLength) : ''
+}
+function trackingIso(value: unknown): string | null {
+  if (typeof value !== 'string' || !value.trim()) return null
+  const timestamp = Date.parse(value)
+  return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : null
+}
+
+export function normalizeShippingStatus(statusValue: unknown, subStatusValue?: unknown, daysSinceUpdate?: unknown): string {
+  const status = trackingString(statusValue, 60).toLowerCase()
+  const subStatus = trackingString(subStatusValue, 100).toLowerCase()
+  if (status === 'delivered') return 'delivered'
+  if (status === 'returned' || status === 'returning' || subStatus.includes('return')) return 'returned'
+  if (status === 'exception' || status === 'deliveryfailure') return 'attention'
+  if (status === 'outfordelivery') return 'out_for_delivery'
+  if (status === 'availableforpickup') return 'available_for_pickup'
+  if (status === 'intransit') {
+    const idleDays = Number(daysSinceUpdate)
+    return Number.isFinite(idleDays) && idleDays >= 5 ? 'stale' : 'in_transit'
+  }
+  if (status === 'inforeceived') return 'label_created'
+  if (status === 'notfound') return 'not_found'
+  if (status === 'expired') return 'stale'
+  return 'unknown'
+}
+
+function parsed17TrackResult(record: TrackingApiRecord): {
+  tracking_status: string
+  provider_status: string | null
+  provider_sub_status: string | null
+  latest_event: string | null
+  latest_location: string | null
+  latest_event_at: string | null
+  estimated_delivery_from: string | null
+  estimated_delivery_to: string | null
+} {
+  const trackInfo = trackingObject(record.track_info)
+  const latestStatus = trackingObject(trackInfo.latest_status)
+  const latestEvent = trackingObject(trackInfo.latest_event)
+  const translation = trackingObject(latestEvent.description_translation)
+  const metrics = trackingObject(trackInfo.time_metrics)
+  const estimated = trackingObject(metrics.estimated_delivery_date)
+  const rawStatus = trackingString(latestStatus.status, 60) || null
+  const rawSubStatus = trackingString(latestStatus.sub_status, 100) || null
+  const latestDescription = trackingString(translation.description || latestEvent.description, 500) || null
+  return {
+    tracking_status: normalizeShippingStatus(rawStatus, rawSubStatus, metrics.days_after_last_update),
+    provider_status: rawStatus,
+    provider_sub_status: rawSubStatus,
+    latest_event: latestDescription,
+    latest_location: trackingString(latestEvent.location, 180) || null,
+    latest_event_at: trackingIso(latestEvent.time_utc || latestEvent.time_iso),
+    estimated_delivery_from: trackingIso(estimated.from),
+    estimated_delivery_to: trackingIso(estimated.to),
+  }
+}
+
+async function call17Track(env: Env, endpoint: 'register' | 'gettrackinfo', items: Array<Record<string, unknown>>): Promise<TrackingApiResponse> {
+  const token = env.TRACKING_17TRACK_API_TOKEN || ''
+  if (!token) throw new Error('Der 17TRACK API-Token ist noch nicht als Cloudflare Worker Secret eingerichtet.')
+  const response = await fetch('https://api.17track.net/track/v2.4/' + endpoint, {
+    method: 'POST',
+    headers: {
+      '17token': token,
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+    },
+    body: JSON.stringify(items),
+  })
+  const payload = await response.json().catch(() => ({})) as TrackingApiResponse
+  if (!response.ok || payload.code !== 0) {
+    const rejected = payload.data?.rejected?.[0]?.error?.message
+    throw new Error(trackingString(rejected, 300) || '17TRACK hat die Anfrage mit Status ' + response.status + ' abgelehnt.')
+  }
+  return payload
+}
+
+async function updateShippingTracking(env: Env, id: string, patch: Record<string, unknown>): Promise<void> {
+  await supabaseAdminJson(env, 'shipping_trackings?id=eq.' + encodeURIComponent(id), {
+    method: 'PATCH',
+    headers: { Prefer: 'return=minimal' },
+    body: JSON.stringify({ ...patch, updated_at: new Date().toISOString() }),
+  })
+}
+
+async function shippingStatus(request: Request, env: Env): Promise<Response> {
+  const user = await getAuthenticatedEbayUser(request, env)
+  if (!user) return ebayJson({ error: 'Bitte melde dich im Reselling Manager erneut an.' }, 401)
+  try {
+    const rows = await supabaseAdminJson<ShippingTrackingRow[]>(
+      env,
+      'shipping_trackings?select=id,product_id,direction,tracking_number,carrier,tracking_url,provider_registered,provider_carrier,tracking_status,provider_status,provider_sub_status,latest_event,latest_location,latest_event_at,estimated_delivery_from,estimated_delivery_to,last_synced_at,tracking_error&user_id=eq.' + encodeURIComponent(user.id) + '&order=updated_at.desc&limit=1000',
+    )
+    const apiAvailable = Boolean(env.TRACKING_17TRACK_API_TOKEN)
+    const webhookConfigured = Boolean(env.TRACKING_17TRACK_WEBHOOK_SECRET)
+    return ebayJson({
+      apiAvailable,
+      webhookConfigured,
+      liveTrackingEnabled: apiAvailable && webhookConfigured,
+      provider: '17TRACK',
+      trackings: rows,
+    })
+  } catch (error) {
+    return ebayJson({ error: error instanceof Error ? error.message : 'Versandstatus konnte nicht geladen werden.' }, 503)
+  }
+}
+
+async function shippingSync(request: Request, env: Env): Promise<Response> {
+  const user = await getAuthenticatedEbayUser(request, env)
+  if (!user) return ebayJson({ error: 'Bitte melde dich im Reselling Manager erneut an.' }, 401)
+  if (!env.TRACKING_17TRACK_API_TOKEN) {
+    return ebayJson({ error: 'Live-Tracking ist noch nicht eingerichtet. Hinterlege zuerst den 17TRACK API-Token als Cloudflare Worker Secret.' }, 503)
+  }
+
+  try {
+    const products = await supabaseAdminJson<ShippingProductRow[]>(
+      env,
+      'products?select=id,name,status,sale_date,incoming_carrier,incoming_tracking_number,incoming_tracking_url,outgoing_carrier,outgoing_tracking_number,outgoing_tracking_url&user_id=eq.' + encodeURIComponent(user.id) + '&deleted_at=is.null&limit=1000',
+    )
+    const existing = await supabaseAdminJson<ShippingTrackingRow[]>(
+      env,
+      'shipping_trackings?select=*&user_id=eq.' + encodeURIComponent(user.id) + '&limit=1000',
+    )
+    const existingByKey = new Map(existing.map(row => [row.product_id + ':' + row.direction, row]))
+    const desiredRows: ShippingTrackingRow[] = []
+    const now = new Date().toISOString()
+
+    for (const product of products) {
+      const directions: Array<{ direction: 'incoming' | 'outgoing'; number: string | null; carrier: string | null; url: string | null }> = [
+        {
+          direction: 'incoming',
+          number: product.incoming_tracking_number,
+          carrier: product.incoming_carrier,
+          url: product.incoming_tracking_url,
+        },
+        {
+          direction: 'outgoing',
+          number: product.outgoing_tracking_number,
+          carrier: product.outgoing_carrier,
+          url: product.outgoing_tracking_url,
+        },
+      ]
+      for (const item of directions) {
+        const number = trackingString(item.number, 120)
+        if (!number) continue
+        const key = product.id + ':' + item.direction
+        const previous = existingByKey.get(key)
+        const sameNumber = previous?.tracking_number === number
+        desiredRows.push({
+          id: sameNumber && previous ? previous.id : crypto.randomUUID(),
+          user_id: user.id,
+          product_id: product.id,
+          direction: item.direction,
+          tracking_number: number,
+          carrier: trackingString(item.carrier, 100) || '',
+          tracking_url: trackingString(item.url, 1000) || '',
+          provider: '17track',
+          provider_carrier: sameNumber && previous ? previous.provider_carrier : null,
+          provider_registered: sameNumber && previous ? previous.provider_registered : false,
+          tracking_status: sameNumber && previous ? previous.tracking_status : 'unknown',
+          provider_status: sameNumber && previous ? previous.provider_status : null,
+          provider_sub_status: sameNumber && previous ? previous.provider_sub_status : null,
+          latest_event: sameNumber && previous ? previous.latest_event : null,
+          latest_location: sameNumber && previous ? previous.latest_location : null,
+          latest_event_at: sameNumber && previous ? previous.latest_event_at : null,
+          estimated_delivery_from: sameNumber && previous ? previous.estimated_delivery_from : null,
+          estimated_delivery_to: sameNumber && previous ? previous.estimated_delivery_to : null,
+          last_synced_at: sameNumber && previous ? previous.last_synced_at : null,
+          tracking_error: sameNumber && previous ? previous.tracking_error : null,
+          updated_at: now,
+        })
+      }
+    }
+
+    const desiredIds = new Set(desiredRows.map(row => row.id))
+    const staleIds = existing.filter(row => !desiredIds.has(row.id)).map(row => row.id)
+    if (staleIds.length) {
+      await supabaseAdminJson(env, 'shipping_trackings?user_id=eq.' + encodeURIComponent(user.id) + '&id=in.(' + staleIds.join(',') + ')', {
+        method: 'DELETE',
+      })
+    }
+    if (desiredRows.length) {
+      await supabaseAdminJson(env, 'shipping_trackings?on_conflict=user_id,product_id,direction', {
+        method: 'POST',
+        headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
+        body: JSON.stringify(desiredRows),
+      })
+    }
+
+    const pending = desiredRows.filter(row => !row.provider_registered)
+    let registered = 0
+    for (let offset = 0; offset < pending.length; offset += 40) {
+      const batch = pending.slice(offset, offset + 40)
+      const result = await call17Track(env, 'register', batch.map(row => ({
+        number: row.tracking_number,
+        tag: 'rm:' + row.id,
+        lang: 'de',
+      })))
+      const accepted = result.data?.accepted || []
+      const rejected = result.data?.rejected || []
+      for (const item of accepted) {
+        const number = trackingString(item.number, 120)
+        const tag = trackingString(item.tag, 100)
+        const id = tag.startsWith('rm:') ? tag.slice(3) : batch.find(row => row.tracking_number === number)?.id
+        if (!id) continue
+        await updateShippingTracking(env, id, {
+          provider_registered: true,
+          provider_carrier: Number.isFinite(Number(item.carrier)) ? Number(item.carrier) : null,
+          tracking_error: null,
+        })
+        registered++
+      }
+      for (const item of rejected) {
+        const number = trackingString(item.number, 120)
+        const row = batch.find(entry => entry.tracking_number === number)
+        if (row) {
+          await updateShippingTracking(env, row.id, {
+            tracking_error: trackingString(item.error?.message, 400) || '17TRACK konnte die Sendungsnummer nicht registrieren.',
+          })
+        }
+      }
+    }
+
+    const registeredRows = desiredRows.filter(row => row.provider_registered || pending.some(item => item.id === row.id && !row.tracking_error))
+    let updated = 0
+    for (let offset = 0; offset < registeredRows.length; offset += 40) {
+      const batch = registeredRows.slice(offset, offset + 40)
+      const result = await call17Track(env, 'gettrackinfo', batch.map(row => ({
+        number: row.tracking_number,
+        ...(row.provider_carrier ? { carrier: row.provider_carrier } : {}),
+      })))
+      const accepted = result.data?.accepted || []
+      for (const item of accepted) {
+        const number = trackingString(item.number, 120)
+        const tag = trackingString(item.tag, 100)
+        const row = (tag.startsWith('rm:') ? batch.find(entry => entry.id === tag.slice(3)) : undefined)
+          || batch.find(entry => entry.tracking_number === number)
+        if (!row) continue
+        await updateShippingTracking(env, row.id, {
+          ...parsed17TrackResult(item),
+          provider_registered: true,
+          tracking_error: null,
+          last_synced_at: new Date().toISOString(),
+        })
+        updated++
+      }
+      for (const item of result.data?.rejected || []) {
+        const number = trackingString(item.number, 120)
+        const row = batch.find(entry => entry.tracking_number === number)
+        if (row && item.error?.code !== -18019909) {
+          await updateShippingTracking(env, row.id, {
+            tracking_error: trackingString(item.error?.message, 400) || 'Tracking-Informationen sind noch nicht verfügbar.',
+            last_synced_at: new Date().toISOString(),
+          })
+        }
+      }
+    }
+
+    return ebayJson({
+      ok: true,
+      total: desiredRows.length,
+      registered,
+      updated,
+      syncedAt: new Date().toISOString(),
+    })
+  } catch (error) {
+    return ebayJson({ error: error instanceof Error ? error.message : 'Die Sendungen konnten nicht synchronisiert werden.' }, 502)
+  }
+}
+
+function secureStringEqual(left: string, right: string): boolean {
+  if (left.length !== right.length) return false
+  let difference = 0
+  for (let index = 0; index < left.length; index++) {
+    difference |= left.charCodeAt(index) ^ right.charCodeAt(index)
+  }
+  return difference === 0
+}
+
+export async function verify17TrackWebhookSignature(rawBody: string, signature: string, secret: string): Promise<boolean> {
+  if (!signature || !secret) return false
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(rawBody + '/' + secret))
+  const expected = [...new Uint8Array(digest)].map(byte => byte.toString(16).padStart(2, '0')).join('')
+  return secureStringEqual(signature.toLowerCase().replace(/^sha256=/, ''), expected)
+}
+
+async function shippingWebhook(request: Request, env: Env): Promise<Response> {
+  const secret = env.TRACKING_17TRACK_WEBHOOK_SECRET || ''
+  if (!secret) return ebayJson({ error: '17TRACK Webhook-Sicherheitsschlüssel ist nicht eingerichtet.' }, 503)
+  const rawBody = await request.text()
+  if (rawBody.length > 500000) return ebayJson({ error: 'Webhook-Anfrage ist zu groß.' }, 413)
+  const signature = request.headers.get('sign') || ''
+  if (!(await verify17TrackWebhookSignature(rawBody, signature, secret))) {
+    return ebayJson({ error: 'Ungültige 17TRACK-Signatur.' }, 401)
+  }
+  try {
+    const payload = JSON.parse(rawBody) as {
+      event?: string
+      data?: { accepted?: TrackingApiRecord[] }
+    }
+    if (payload.event !== 'TRACKING_UPDATED') return ebayJson({ ok: true, ignored: true })
+    const accepted = Array.isArray(payload.data?.accepted) ? payload.data.accepted : []
+    let updated = 0
+    for (const item of accepted) {
+      const tag = trackingString(item.tag, 100)
+      if (!tag.startsWith('rm:')) continue
+      const id = tag.slice(3)
+      if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) continue
+      await updateShippingTracking(env, id, {
+        ...parsed17TrackResult(item),
+        provider_registered: true,
+        tracking_error: null,
+        last_synced_at: new Date().toISOString(),
+      })
+      updated++
+    }
+    return ebayJson({ ok: true, updated })
+  } catch (error) {
+    return ebayJson({ error: error instanceof Error ? error.message : '17TRACK Webhook konnte nicht verarbeitet werden.' }, 400)
+  }
+}
+
 export default {
   async scheduled(_controller: unknown, env: Env): Promise<void> {
     if (!env.EBAY_CLIENT_ID || !env.EBAY_CLIENT_SECRET || !env.EBAY_RU_NAME ||
@@ -1035,6 +1410,15 @@ export default {
     }
     if (url.pathname === '/api/ebay/disconnect' && request.method === 'POST') {
       return ebayDisconnect(request, env)
+    }
+    if (url.pathname === '/api/shipping/status' && request.method === 'GET') {
+      return shippingStatus(request, env)
+    }
+    if (url.pathname === '/api/shipping/sync' && request.method === 'POST') {
+      return shippingSync(request, env)
+    }
+    if (url.pathname === '/api/shipping/webhook' && request.method === 'POST') {
+      return shippingWebhook(request, env)
     }
     if (url.pathname === '/api/shipping/match' && request.method === 'POST') {
       return matchShippingProducts(request, env)

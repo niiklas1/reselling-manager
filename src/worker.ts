@@ -1229,6 +1229,7 @@ async function shippingSync(request: Request, env: Env): Promise<Response> {
 
     const pending = desiredRows.filter(row => !row.provider_registered)
     let registered = 0
+    const rejectedNumbers = new Set<string>()
     for (let offset = 0; offset < pending.length; offset += 40) {
       const batch = pending.slice(offset, offset + 40)
       const result = await call17Track(env, 'register', batch.map(row => ({
@@ -1254,6 +1255,7 @@ async function shippingSync(request: Request, env: Env): Promise<Response> {
         const number = trackingString(item.number, 120)
         const row = batch.find(entry => entry.tracking_number === number)
         if (row) {
+          rejectedNumbers.add(row.id)
           await updateShippingTracking(env, row.id, {
             tracking_error: trackingString(item.error?.message, 400) || '17TRACK konnte die Sendungsnummer nicht registrieren.',
           })
@@ -1261,7 +1263,18 @@ async function shippingSync(request: Request, env: Env): Promise<Response> {
       }
     }
 
-    const registeredRows = desiredRows.filter(row => row.provider_registered || pending.some(item => item.id === row.id && !row.tracking_error))
+    // By default, fetch only the first result after registering new numbers.
+    // A deliberate manual refresh may re-query every active registered shipment.
+    const requestBody = await request.clone().json().catch(() => ({})) as { forceRefresh?: boolean }
+    let registeredRows = desiredRows.filter(row =>
+      pending.some(item => item.id === row.id && !rejectedNumbers.has(row.id))
+    )
+    if (requestBody.forceRefresh) {
+      registeredRows = await supabaseAdminJson<ShippingTrackingRow[]>(
+        env,
+        'shipping_trackings?select=id,user_id,product_id,direction,tracking_number,carrier,tracking_url,provider,provider_carrier,provider_registered,tracking_status,provider_status,provider_sub_status,latest_event,latest_location,latest_event_at,estimated_delivery_from,estimated_delivery_to,last_synced_at,tracking_error,updated_at&user_id=eq.' + encodeURIComponent(user.id) + '&provider_registered=eq.true&tracking_status=neq.delivered&limit=1000',
+      )
+    }
     let updated = 0
     for (let offset = 0; offset < registeredRows.length; offset += 40) {
       const batch = registeredRows.slice(offset, offset + 40)

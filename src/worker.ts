@@ -27,6 +27,7 @@ type RankedModelMatch = {
   rerankerScore: number
   bgeScore: number
   gemmaScore: number
+  qwenScore: number
   lexicalScore: number
 }
 
@@ -395,7 +396,7 @@ async function matchShippingProducts(request: Request, env: Env): Promise<Respon
       candidateId: candidate.id,
       productId: approved ? best.productId : '',
       score: Number((best?.score || 0).toFixed(4)),
-      semanticScore: Number((best ? Math.max(normalizedCosine(best.bgeScore), normalizedCosine(best.gemmaScore)) : 0).toFixed(4)),
+      semanticScore: Number((best ? normalizedCosine(bestEmbeddingSimilarity) : 0).toFixed(4)),
       lexicalScore: Number((best?.lexicalScore || 0).toFixed(4)),
       rerankerScore: Number((best?.rerankerScore || 0).toFixed(4)),
       modelAgreement,

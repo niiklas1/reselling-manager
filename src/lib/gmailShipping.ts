@@ -71,7 +71,7 @@ const GMAIL_API = 'https://gmail.googleapis.com/gmail/v1/users/me'
 const SHIPPING_INTENT = /\b(?:shipping confirmation|shipment confirmation|shipment update|your order has shipped|your order was shipped|your package has shipped|your parcel has shipped|we(?:'|’)ve shipped|we have shipped|shipped your order|is on its way|on its way to you|out for delivery|in transit|left our warehouse|left the warehouse|dispatch confirmation|dispatched your order|has been dispatched|handed to carrier|handed to courier|carrier picked up|carrier has your package|delivery attempt|arriving today|ready for pickup|available for pickup|Versandmitteilung|Paket wurde abgeholt|versandfertig|tracking number|tracking details|track your (?:order|package|parcel)|track package|sendungsverfolgung|sendungsnummer|versandbest(?:ä|ae)tigung|wurde versendet|wurde verschickt|ist unterwegs|auf dem weg zu dir|paket wurde versendet|paket wurde verschickt|ihre bestellung wurde versendet|ihre sendung wurde|in zustellung|zustellversuch|abholbereit)\b/i
 const TRACKING_LABEL = /\b(?:track(?:ing)? (?:your )?(?:order|package|parcel|shipment)|sendungsverfolgung|tracking (?:link|number|details|information)|view tracking|track shipment|track package|track parcel)\b/i
 const TRACKING_ENDPOINT = /(?:^|[\/_.-])(?:track(?:ing)?|shiptrack|shipment-tracking|parcel-tracking|package-tracking|sendungsverfolgung|progress-tracker)(?:$|[\/_.?&=-])/i
-const TRACKING_ID_PARAMS = new Set(['tracking', 'trackingnumber', 'tracking_number', 'trackno', 'track_no', 'tracknum', 'track_num', 'shipmentid', 'shipment_id', 'parcelid', 'parcel_id', 'packageid', 'package_id', 'code'])
+const TRACKING_ID_PARAMS = new Set(['tracking', 'trackingnumber', 'tracking_number', 'trackingid', 'tracking_id', 'trackingcode', 'tracking_code', 'trackno', 'track_no', 'tracknum', 'track_num', 'trackid', 'track_id', 'shipmentid', 'shipment_id', 'shipmentnumber', 'shipment_number', 'shipmentno', 'shipment_no', 'parcelid', 'parcel_id', 'parcelnumber', 'parcel_number', 'packageid', 'package_id', 'consignment', 'consignmentnumber', 'consignment_number', 'waybill', 'waybillnumber', 'awb', 'awbnumber', 'barcode', 'code'])
 const TRACKING_TERMS = /tracking|track|sendungsverfolg|sendungsnummer|paketnummer|shipment|parcel/i
 
 export function isLikelyShippingEmail(subject: string, bodyText: string): boolean {
@@ -178,9 +178,16 @@ function resemblesUnsafeTrackingHost(rawUrl: string): boolean {
 function unwrapTrackingUrl(rawUrl: string): string {
   try {
     const url = new URL(rawUrl)
-    if (/^(?:www\.)?google\.(?:com|de|co\.uk)$/i.test(url.hostname)) {
-      const nested = url.searchParams.get('url') || url.searchParams.get('q') || url.searchParams.get('u')
-      if (nested && /^https:\/\//i.test(nested)) return nested
+    const wrapperHosts = /^(?:www\\.)?google\\.(?:com|de|co\\.uk)$/i
+    const redirectKeys = ['url', 'u', 'redirect', 'redirect_url', 'target', 'destination', 'dest', 'to', 'link', 'continue']
+    const nested = wrapperHosts.test(url.hostname)
+      ? url.searchParams.get('url') || url.searchParams.get('q') || url.searchParams.get('u')
+      : redirectKeys.map(key => url.searchParams.get(key)).find(value => value && /^https:\\/\\//i.test(value)) || ''
+    if (nested && /^https:\\/\\//i.test(nested)) {
+      try {
+        const nestedUrl = new URL(nested)
+        if (isSafeTrackingUrl(nestedUrl.toString())) return nestedUrl.toString()
+      } catch { /* keep the original HTTPS redirect if parsing fails */ }
     }
     return url.toString()
   } catch {
@@ -340,7 +347,7 @@ function canonicalTrackingUrl(rawUrl: string): string {
     const url = new URL(rawUrl)
     url.hash = ''
     for (const key of [...url.searchParams.keys()]) {
-      if (/^(utm_|gclid$|fbclid$|mc_[ce]id$|ref$)/i.test(key)) url.searchParams.delete(key)
+      if (/^(utm_|gclid$|fbclid$|mc_[ce]id$)/i.test(key)) url.searchParams.delete(key)
     }
     url.hostname = url.hostname.toLowerCase()
     url.pathname = url.pathname.replace(/\/+$/, '')
@@ -454,15 +461,30 @@ function parseMessage(message: GmailMessage, products: MatchableProduct[]): Gmai
 }
 
 async function getJson<T>(url: string, token: string): Promise<T> {
-  const response = await fetch(url, {
-    headers: { Authorization: 'Bearer ' + token, Accept: 'application/json' },
-  })
-  if (!response.ok) {
+  let lastError: Error | null = null
+  for (let attempt = 0; attempt < 3; attempt++) {
+    let response: Response
+    try {
+      response = await fetch(url, {
+        headers: { Authorization: 'Bearer ' + token, Accept: 'application/json' },
+      })
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error('Netzwerkfehler beim Gmail-Zugriff.')
+      if (attempt < 2) {
+        await new Promise(resolve => setTimeout(resolve, 250 * (attempt + 1)))
+        continue
+      }
+      throw lastError
+    }
+    if (response.ok) return response.json() as Promise<T>
     if (response.status === 401) throw new Error('Die Gmail-Berechtigung ist abgelaufen. Verbinde Gmail erneut.')
     if (response.status === 403) throw new Error('Google hat den Gmail-Zugriff abgelehnt. Prüfe, ob die Gmail API aktiviert ist und die Leseberechtigung erteilt wurde.')
-    throw new Error('Gmail konnte die Nachricht nicht abrufen (HTTP ' + response.status + ').')
+    if (![429, 500, 502, 503, 504].includes(response.status) || attempt === 2) {
+      throw new Error('Gmail konnte die Nachricht nicht abrufen (HTTP ' + response.status + ').')
+    }
+    await new Promise(resolve => setTimeout(resolve, 250 * (attempt + 1)))
   }
-  return response.json() as Promise<T>
+  throw lastError || new Error('Gmail konnte die Nachricht nicht abrufen.')
 }
 
 /**

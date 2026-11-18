@@ -40,18 +40,18 @@ type GmailMessage = {
 
 const GMAIL_API = 'https://gmail.googleapis.com/gmail/v1/users/me'
 const TRACKING_TERMS = /tracking|track(?:ing)?|sendungsverfolg|sendungsnummer|paketnummer|shipment|parcel|delivery|lieferung|versand|versendet|shipped|dispatched|zugestellt/i
-const CARRIER_HOSTS: Array<{ name: string; pattern: RegExp }> = [
-  { name: 'DHL', pattern: /(^|\.)dhl\./i },
-  { name: 'Deutsche Post', pattern: /(^|\.)deutschepost\.de$/i },
-  { name: 'DPD', pattern: /(^|\.)dpd\./i },
-  { name: 'Hermes', pattern: /(^|\.)(myhermes\.de|hermesworld\.com|hermes\.[a-z.]+)$/i },
-  { name: 'GLS', pattern: /(^|\.)gls(-group)?\./i },
-  { name: 'UPS', pattern: /(^|\.)ups\./i },
-  { name: 'FedEx', pattern: /(^|\.)fedex\./i },
-  { name: 'Amazon Logistics', pattern: /(^|\.)amazon\.[a-z.]+$/i },
-  { name: 'InPost', pattern: /(^|\.)inpost\./i },
-  { name: 'PostNL', pattern: /(^|\.)postnl\./i },
-  { name: 'DPDgroup', pattern: /(^|\.)chrono-post\./i },
+const CARRIERS: Array<{ name: string; domains: string[] }> = [
+  { name: 'DHL', domains: ['dhl.de', 'dhl.com', 'dhl.co.uk', 'dhl.fr', 'dhl.nl', 'dhl.at', 'dhl.ch', 'dhlparcel.nl'] },
+  { name: 'Deutsche Post', domains: ['deutschepost.de', 'deutschepost.com'] },
+  { name: 'DPD', domains: ['dpd.de', 'dpd.com', 'dpd.co.uk', 'dpd.fr', 'dpd.nl', 'dpdgroup.com'] },
+  { name: 'Hermes', domains: ['myhermes.de', 'hermesworld.com', 'hermes.de', 'evri.com'] },
+  { name: 'GLS', domains: ['gls-group.com', 'gls-group.eu', 'gls-pakete.de', 'gls.de', 'gls-italy.com', 'gls-netherlands.com'] },
+  { name: 'UPS', domains: ['ups.com', 'ups.de', 'ups.co.uk'] },
+  { name: 'FedEx', domains: ['fedex.com', 'fedex.de', 'fedex.co.uk'] },
+  { name: 'Amazon Logistics', domains: ['amazon.de', 'amazon.com', 'amazon.co.uk', 'amazon.fr', 'amazon.it', 'amazon.es'] },
+  { name: 'InPost', domains: ['inpost.pl', 'inpost.eu', 'inpost.co.uk'] },
+  { name: 'PostNL', domains: ['postnl.nl', 'postnl.be'] },
+  { name: 'Chronopost', domains: ['chronopost.fr'] },
 ]
 
 function normalizeText(value: string): string {
@@ -63,20 +63,22 @@ function normalizeText(value: string): string {
 }
 
 export function identifyCarrier(urlOrHost: string): string {
-  let host = urlOrHost
+  let host = urlOrHost.toLowerCase()
   try {
-    host = new URL(urlOrHost).hostname
+    host = new URL(urlOrHost).hostname.toLowerCase()
   } catch {
-    host = urlOrHost.replace(/^www\./i, '')
+    host = host.replace(/^www\./i, '')
   }
-  return CARRIER_HOSTS.find(item => item.pattern.test(host))?.name || ''
+  return CARRIERS.find(carrier => carrier.domains.some(domain =>
+    host === domain || host.endsWith('.' + domain)
+  ))?.name || ''
 }
 
 export function isSafeTrackingUrl(rawUrl: string): boolean {
   try {
     const url = new URL(rawUrl)
     if (url.protocol !== 'https:' || url.username || url.password) return false
-    if (url.hostname === 'localhost' || url.hostname.endsWith('.local')) return false
+    if (url.hostname === 'localhost' || url.hostname.endsWith('.local') || url.hostname.startsWith('[')) return false
     if (/^(?:127\.|10\.|192\.168\.|172\.(?:1[6-9]|2\d|3[01])\.)/.test(url.hostname)) return false
     return Boolean(identifyCarrier(url.hostname) || TRACKING_TERMS.test(url.pathname + url.search))
   } catch {

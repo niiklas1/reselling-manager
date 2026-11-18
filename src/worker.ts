@@ -724,7 +724,6 @@ async function ebayGraphql<T>(accessToken: string, query: string): Promise<T> {
     method: 'POST',
     headers: {
       Authorization: 'Bearer ' + accessToken,
-      'X-EBAY-C-MARKETPLACE-ID': EBAY_MARKETPLACE,
       'Content-Type': 'application/json',
       Accept: 'application/json',
     },
@@ -769,15 +768,7 @@ async function searchEbayListingIds(accessToken: string): Promise<Array<{ id: st
   return [...byId.entries()].map(([id, status]) => ({ id, status })).slice(0, 100)
 }
 
-function buildEbayListingDetailQuery(listingId: string, includePrice: 'direct' | 'original' | 'none'): string {
-  const priceSelection = includePrice === 'direct'
-    ? 'fixedPrice { value currency }'
-    : includePrice === 'original'
-      ? 'fixedPrice { original { value currency } }'
-      : ''
-  const itemsSelection = priceSelection
-    ? 'listingItems { items { itemTerms { pricingTerms { ' + priceSelection + ' } availability { quantityAvailable } } } }'
-    : ''
+function buildEbayListingDetailQuery(listingId: string): string {
   return [
     'query SellerListings {',
     ' sellerListings(input: { listings: [{ listingId: "' + listingId + '" }] }) {',
@@ -785,24 +776,24 @@ function buildEbayListingDetailQuery(listingId: string, includePrice: 'direct' |
     '   listingId',
     '   listing {',
     '    listingId marketplace sellerProduct { title }',
+    '    items { itemTerms { pricingTerms { fixedPrice { original { value currency } } } availability { quantityAvailable } } }',
     '    listingTerms { listingFormat lifecycleTerms { listingStatus startAt actualEndAt } totalQuantityAvailable }',
-    itemsSelection ? '    ' + itemsSelection : '',
     '   }',
     '  } }',
     ' }',
     '}',
-  ].filter(Boolean).join('\n')
+  ].join('\n')
 }
 
 function moneyFromListing(value: any): { price: number | null; currency: string | null; quantity: number | null } {
-  const items = Array.isArray(value?.listingItems?.items) ? value.listingItems.items : []
+  const items = Array.isArray(value?.items) ? value.items : []
   const prices: Array<{ price: number; currency: string }> = []
   let quantity = 0
   for (const item of items) {
     const terms = item?.itemTerms || {}
-    const amount = terms?.pricingTerms?.fixedPrice
-    const numeric = Number(amount?.value ?? amount?.original?.value)
-    const currency = String(amount?.currency || amount?.original?.currency || '')
+    const money = terms?.pricingTerms?.fixedPrice?.original || terms?.pricingTerms?.fixedPrice
+    const numeric = Number(money?.value)
+    const currency = String(money?.currency || '')
     if (Number.isFinite(numeric) && currency) prices.push({ price: numeric, currency })
     const available = Number(terms?.availability?.quantityAvailable)
     if (Number.isFinite(available)) quantity += available
@@ -815,24 +806,12 @@ function moneyFromListing(value: any): { price: number | null; currency: string 
   return { price, currency, quantity: items.length ? quantity : null }
 }
 
+
 async function getEbayListingDetail(accessToken: string, id: string, searchStatus: string): Promise<EbayListingRow | null> {
-  let data: any
-  let listing: any
-  let lastError: unknown
-  for (const mode of ['direct', 'original', 'none'] as const) {
-    try {
-      data = await ebayGraphql<any>(accessToken, buildEbayListingDetailQuery(id, mode))
-      const result = data?.sellerListings?.listings?.[0]
-      listing = result?.listing
-      if (listing) break
-    } catch (error) {
-      lastError = error
-    }
-  }
-  if (!listing) {
-    if (lastError) throw lastError
-    return null
-  }
+  const data = await ebayGraphql<any>(accessToken, buildEbayListingDetailQuery(id))
+  const result = data?.sellerListings?.listings?.[0]
+  const listing = result?.listing
+  if (!listing) return null
   const lifecycle = listing.listingTerms?.lifecycleTerms || {}
   const status = String(lifecycle.listingStatus || searchStatus || 'UNKNOWN').toUpperCase()
   const amount = moneyFromListing(listing)

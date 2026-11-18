@@ -1,5 +1,8 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+import { dirname, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import {
   applyLearnedGmailMatch,
   createGmailLearningHint,
@@ -227,4 +230,17 @@ test('does not create local learning rules for duplicate units of the same produ
     matchConfidence: 0,
   }
   assert.equal(createGmailLearningHint(candidate, 'unit-a', products), null)
+})
+
+test('requests a fresh Google access token for every user-initiated Gmail scan', () => {
+  const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
+  const app = readFileSync(resolve(root, 'src/App.tsx'), 'utf8')
+  const start = app.indexOf('function connectAndScan()')
+  const end = app.indexOf('function applyCandidate(', start)
+  assert.ok(start >= 0 && end > start, 'Gmail connect handler should exist')
+  const handler = app.slice(start, end)
+  assert.match(handler, /tokenClient\.current\.requestAccessToken\(\{ prompt: '' \}\)/)
+  assert.doesNotMatch(handler, /syncWithToken\(accessToken\)/)
+  assert.match(app, /Google blockiert diese App-Adresse/)
+  assert.match(app, /origin_mismatch/)
 })

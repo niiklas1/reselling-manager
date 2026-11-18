@@ -1,12 +1,16 @@
 name: Build check
 
 on:
+  push:
+    branches: [main]
   pull_request:
     branches: [main]
     paths:
       - "src/**"
       - "tests/**"
       - "public/**"
+      - "supabase/**"
+      - "docs/**"
       - "index.html"
       - "package.json"
       - "vite.config.ts"
@@ -26,7 +30,7 @@ jobs:
           node-version: 22
       - name: Install dependencies
         run: npm install --no-audit --no-fund
-      - name: Invoice parser regression tests
-        run: npm run test:invoice
+      - name: Application regression tests
+        run: npm test
       - name: Type-check and build
         run: npm run build

@@ -457,3 +457,448 @@ body{background:#f1eff8}
   .gmail-candidate-actions>.field:first-child{grid-column:auto}
   .gmail-panel-heading{flex-direction:column}
 }
+
+
+/* Account sign-in and secure cloud session */
+.auth-screen{
+  min-height:100vh;
+  min-height:100dvh;
+  display:grid;
+  place-items:center;
+  padding:24px;
+  background:
+    radial-gradient(circle at 14% 12%,rgba(126,88,225,.15),transparent 34%),
+    radial-gradient(circle at 88% 86%,rgba(66,125,205,.12),transparent 32%),
+    #101426;
+}
+.auth-card{
+  width:min(100%,440px);
+  display:grid;
+  gap:18px;
+  padding:clamp(25px,6vw,42px);
+  border:1px solid rgba(180,164,225,.2);
+  border-radius:22px;
+  background:rgba(24,29,51,.96);
+  box-shadow:0 24px 80px rgba(0,0,0,.28);
+  color:#f3f0ff;
+}
+.auth-brand{display:flex;align-items:center;gap:11px;font:800 17px Manrope,sans-serif;letter-spacing:-.6px}
+.auth-brand>span:last-child>span{color:#aaa4bf;font-weight:500}
+.auth-brand .brand-symbol{width:38px;height:38px;display:grid;place-items:center;border-radius:11px;background:linear-gradient(145deg,#9a7af4,#6647c7);color:#fff;font-size:21px}
+.auth-eyebrow{margin-top:12px;color:#ac91f5;font-size:9px;font-weight:800;letter-spacing:1.7px}
+.auth-card h1{margin:-9px 0 0;font:800 clamp(25px,5vw,32px) Manrope,sans-serif;letter-spacing:-1.1px}
+.auth-description{margin:-8px 0 3px;color:#a9aec3;font-size:12px;line-height:1.7}
+.auth-google-button{
+  width:100%;min-height:50px;display:flex;align-items:center;justify-content:center;gap:12px;
+  padding:0 17px;border:1px solid #e2e4eb;border-radius:10px;background:#fff;color:#303340;
+  font-size:12px;font-weight:800;cursor:pointer;transition:transform .15s,box-shadow .15s,background .15s;
+}
+.auth-google-button:hover:not(:disabled){transform:translateY(-1px);box-shadow:0 8px 22px rgba(0,0,0,.2);background:#fafbff}
+.auth-google-button:focus-visible,.auth-secondary-button:focus-visible{outline:3px solid #aa91f5;outline-offset:3px}
+.auth-google-button:disabled{opacity:.72;cursor:wait}
+.auth-security{display:flex;align-items:flex-start;gap:9px;padding:12px;border:1px solid rgba(136,121,188,.22);border-radius:9px;background:rgba(72,58,112,.16);color:#c1bad7;font-size:9px;line-height:1.6}
+.auth-security svg{flex-shrink:0;color:#a88df2}
+.auth-footer{margin:0;color:#777f9c;text-align:center;font-size:9px;line-height:1.55}
+.auth-error{margin:0;padding:11px 12px;border-radius:8px;background:#48232f;color:#ffc0c8;font-size:10px;line-height:1.5}
+.auth-loading-card{min-height:160px;align-content:center;justify-items:center;text-align:center}
+.auth-loading-card>svg{color:#b29af7}
+.auth-loading-card>p{margin:0;color:#b5bad0;font-size:11px;line-height:1.6}
+.auth-loading-card h1{margin:0;font-size:23px}
+.auth-secondary-button{justify-self:center;border:0;background:transparent;color:#c4b3f7;font-size:10px;font-weight:700;padding:9px 12px;cursor:pointer}
+.cloud-error-status{color:#e79b9f!important}
+.cloud-error-status i{background:#d66a70!important;box-shadow:0 0 0 3px rgba(214,106,112,.12)!important}
+.app-alert.error button{margin-left:7px;border:0;background:transparent;color:inherit;font-size:inherit;font-weight:800;text-decoration:underline;cursor:pointer}
+@media(max-width:560px){
+  .auth-screen{padding:15px}
+  .auth-card{padding:26px 21px;border-radius:17px}
+}
+
+
+/* Explicit, non-destructive import of the previous device-local inventory. */
+.local-migration-card{
+  display:flex;align-items:center;justify-content:space-between;gap:18px;
+  margin:0 0 16px;padding:15px 17px;border:1px solid #d8c9fa;border-radius:12px;
+  background:#f7f3ff;
+}
+.local-migration-card>div{min-width:0;display:grid;gap:5px}
+.local-migration-card strong{font-size:11px;color:#514176}
+.local-migration-card p{margin:0;color:#736b8b;font-size:9px;line-height:1.6}
+.local-migration-card button{flex-shrink:0}
+.app-alert.info,.app-alert.success{padding:10px 12px;margin:0 0 14px;border-radius:8px;font-size:10px;line-height:1.5}
+.app-alert.info{background:#f1edff;color:#6650aa;border:1px solid #e2d9ff}
+.app-alert.success{background:#eaf5ef;color:#39785a;border:1px solid #d2e8da}
+:root[data-theme="dark"] .local-migration-card{background:#211e39;border-color:#493e67}
+:root[data-theme="dark"] .local-migration-card strong{color:#e6dcff}
+:root[data-theme="dark"] .local-migration-card p{color:#b6afd0}
+:root[data-theme="dark"] .app-alert.info{background:#2b2448;border-color:#403661;color:#d2c3ff}
+:root[data-theme="dark"] .app-alert.success{background:#193a32;border-color:#2d5848;color:#9de3c1}
+@media(max-width:700px){
+  .local-migration-card{align-items:stretch;flex-direction:column}
+  .local-migration-card button{width:100%;justify-content:center}
+}
+
+
+/* UX refresh: hierarchy, comfortable controls and honest sync feedback */
+.page-wrap{max-width:1480px;padding:34px clamp(18px,3vw,42px) 22px}
+.panel,.metric-card{border-radius:14px;border-color:#e9e7f0;box-shadow:0 8px 26px rgba(35,30,64,.035)}
+.panel{padding:22px}.metric-card{padding:19px;min-height:132px}
+.nav-link{min-height:44px;font-size:12px}
+.button-primary,.button-secondary,.button-ghost,.setting-toggle,.top-icon,.theme-toggle,.top-avatar-button{min-height:40px}
+.field>span{font-size:10px}.field input,.field select{min-height:42px;font-size:12px;border-radius:8px}
+:focus-visible{outline:3px solid rgba(126,91,235,.75);outline-offset:3px}
+.local-status{font-size:11px;font-weight:600;color:#667389}
+.local-status i{position:relative;width:8px;height:8px;flex:0 0 8px;border-radius:50%;background:#50b889;box-shadow:0 0 0 3px rgba(80,184,137,.13)}
+.local-status.sync-saving i{background:#d8a44c;box-shadow:0 0 0 3px rgba(216,164,76,.15)}
+.local-status.sync-saving i:after{content:"";position:absolute;inset:-5px;border:1px solid rgba(216,164,76,.65);border-radius:50%;animation:sync-ripple 1.25s ease-out infinite}
+.local-status.sync-error i{background:#db6b73;box-shadow:0 0 0 3px rgba(219,107,115,.15)}
+@keyframes sync-ripple{0%{transform:scale(.65);opacity:.85}100%{transform:scale(1.8);opacity:0}}
+.page-footer{display:flex;align-items:center;justify-content:center;gap:7px;flex-wrap:wrap;padding:28px 0 12px;color:#8d93a2;font-size:10px}
+.page-footer .footer-brand{font-weight:700;color:#68748a}
+.page-footer small{margin-left:7px;padding-left:10px;border-left:1px solid #dfe1e8;color:#a3a8b3;font-size:9px}
+.sidebar-foot{font-size:8px;letter-spacing:.7px;color:#a3a8b3;padding:7px 5px 0}
+.settings-panel{width:100%;max-width:900px;padding:clamp(18px,2.8vw,28px)}
+.settings-intro{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;padding-bottom:17px}
+.settings-intro h2{margin:3px 0 5px;font:800 20px Manrope,sans-serif;color:#303449}
+.settings-intro p{margin:0;color:#8891a2;font-size:11px;line-height:1.6}
+.settings-account-pill{padding:7px 10px;border-radius:999px;background:#f2efff;color:#7054c8;font-size:10px;font-weight:700;white-space:nowrap}
+.settings-account-row{margin-top:0!important;padding:13px 0!important}
+.settings-group{margin-top:21px;padding-top:20px;border-top:1px solid #eeeef3}
+.settings-group-heading{display:flex;align-items:center;gap:11px;margin-bottom:13px}
+.settings-group-icon{width:36px;height:36px;display:grid;place-items:center;flex:0 0 36px;border-radius:10px;background:#f1edff;color:#7658dc}
+.settings-group-heading h3{margin:0 0 3px;font:700 13px Manrope,sans-serif;color:#3b4053}
+.settings-group-heading p{margin:0;color:#9299a8;font-size:10px;line-height:1.5}
+.settings-panel .setting-row{gap:14px;padding:14px 0}
+.settings-panel .setting-row>div{min-width:170px;flex:1}
+.settings-panel .setting-row strong{font-size:11px;color:#41485b}
+.settings-panel .setting-row span{font-size:10px;line-height:1.55}
+.settings-panel .setting-pill{font-size:9px;white-space:nowrap}
+.settings-panel .backup-section{margin-top:13px;padding:16px;border:1px solid #ece8f6;border-radius:12px;background:#faf9fd}
+.settings-panel .backup-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
+.settings-panel .backup-heading strong{display:block;font-size:11px;color:#42495c}
+.settings-panel .backup-heading span{display:block;margin-top:4px;color:#8c94a3;font-size:10px;line-height:1.55}
+.settings-panel .backup-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:13px}
+.settings-panel .backup-section>small{display:block;margin-top:10px;color:#969dac;font-size:9px;line-height:1.55}
+.fx-rate-row{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;padding:12px 0 4px}
+.fx-rate-row>span{color:#8b93a2;font-size:10px}
+.fx-refresh-button{min-height:38px;font-size:10px}
+.fx-rate-error{margin:5px 0;padding:9px 11px;border-radius:8px;background:#fff3ec;color:#a8643f;font-size:10px;line-height:1.5}
+.fx-disclaimer{margin:4px 0 7px;color:#9ba1ae;font-size:9px;line-height:1.55}
+.settings-signout-row{margin-top:4px;border-top:1px solid #f0e8ec}
+.settings-signout-row button{display:inline-flex;align-items:center;justify-content:center;gap:7px;min-height:42px;border-color:#eddde2;color:#a05265}
+.settings-signout-row button:hover{background:#fff4f6;border-color:#e8c9d1}
+.currency-select{min-height:42px;font-size:11px}
+.gmail-panel{display:block;padding:0;border:1px solid #e8e5f0;border-radius:12px;overflow:hidden;background:#fff}
+.gmail-panel>summary{list-style:none}.gmail-panel>summary::-webkit-details-marker{display:none}
+.gmail-panel-heading{min-height:74px;align-items:center;padding:13px 15px;cursor:pointer}
+.gmail-panel-heading>div{align-items:center}.gmail-panel-heading strong{font-size:11px}.gmail-panel-heading p{font-size:10px}
+.gmail-readonly{font-size:9px}.gmail-chevron{flex:0 0 auto;color:#8d91a1;transition:transform .18s ease}
+.gmail-panel[open] .gmail-chevron{transform:rotate(180deg)}
+.gmail-panel[open] .gmail-panel-heading{border-bottom:1px solid #eeebf3}
+.gmail-panel-content{display:grid;gap:12px;padding:14px}
+.gmail-setup{gap:10px;padding:13px;border-radius:10px}
+.gmail-setup>small,.gmail-privacy{font-size:9px;line-height:1.6}
+.gmail-setup-links{gap:10px 16px}.gmail-setup-links a{font-size:10px}
+.gmail-controls{gap:10px}.gmail-controls>.field{width:200px}
+.gmail-candidate{border-radius:11px}.gmail-candidate-top strong{font-size:11px}.gmail-candidate>p{font-size:10px}
+.gmail-candidate-top small,.gmail-candidate>small{font-size:9px}.gmail-candidate-actions .field>span{font-size:9px}
+.currency-preview{margin:0;padding:10px 12px;border:1px solid #e2eee8;border-radius:9px;background:#f3faf6;color:#397d5d;font-size:10px;line-height:1.5}
+.invoice-currency-row{display:flex;align-items:flex-end;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:12px}
+.invoice-currency-row .field{width:min(260px,100%)}.invoice-currency-row>span{max-width:330px;color:#9299a8;font-size:9px;line-height:1.5}
+@media(prefers-reduced-motion:reduce){*,*::before,*::after{scroll-behavior:auto!important;animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}}
+@media(max-width:720px){.page-wrap{padding:24px 14px 18px}.settings-panel{padding:16px}.settings-intro{flex-direction:column;align-items:flex-start}.settings-group{margin-top:17px;padding-top:16px}.settings-panel .setting-row{align-items:flex-start}.settings-panel .setting-row>div{min-width:100%}.settings-panel .backup-actions>*{flex:1 1 100%;justify-content:center}.gmail-panel-heading{flex-direction:row;align-items:center}.gmail-readonly{margin-left:auto}.gmail-panel-content{padding:10px}.invoice-currency-row{align-items:stretch}.invoice-currency-row .field{width:100%}}
+:root[data-theme="dark"] .settings-intro h2,:root[data-theme="dark"] .settings-group-heading h3,:root[data-theme="dark"] .settings-panel .setting-row strong,:root[data-theme="dark"] .settings-panel .backup-heading strong{color:#eeeafd}
+:root[data-theme="dark"] .settings-group{border-color:#30344f}:root[data-theme="dark"] .settings-account-pill{background:#30264d;color:#d0baff}
+:root[data-theme="dark"] .settings-group-icon{background:#2d2548;color:#d0baff}:root[data-theme="dark"] .settings-panel .backup-section{background:#191e34;border-color:#393653}
+:root[data-theme="dark"] .settings-panel .backup-heading span,:root[data-theme="dark"] .fx-rate-row>span,:root[data-theme="dark"] .fx-disclaimer{color:#a2a8c2}
+:root[data-theme="dark"] .settings-signout-row button{background:#2b202e;border-color:#573947;color:#ffb8c7}
+:root[data-theme="dark"] .gmail-panel{background:#151a2e;border-color:#393653}:root[data-theme="dark"] .integration-list .gmail-panel:last-child{border-bottom-color:#393653}:root[data-theme="dark"] .gmail-panel-heading strong{color:#e8e5f5}:root[data-theme="dark"] .gmail-panel-heading p{color:#a1a8c0}
+:root[data-theme="dark"] .gmail-panel[open] .gmail-panel-heading{border-color:#393653}
+:root[data-theme="dark"] .currency-preview{background:#183a34;border-color:#2e5948;color:#9de3c1}:root[data-theme="dark"] .fx-rate-error{background:#3b2c25;color:#ffc59e}
+@media(max-width:480px){.settings-panel .setting-row{flex-direction:column}.settings-panel .setting-row>div{min-width:0}.settings-panel .currency-select{width:100%}.settings-signout-row button{width:100%}.page-footer{font-size:9px}}
+
+
+/* Touch controls: keep common actions comfortably tappable on phones and tablets. */
+.button-primary,.button-secondary,.button-ghost,.setting-toggle,.top-icon,.theme-toggle,.top-avatar-button,.filter-control select,.currency-select,.nav-link{min-height:44px}
+.field input,.field select{min-height:44px}
+
+
+/* Visual refinement: a quieter, more cohesive interface. */
+body{background:#f6f7f9}
+.brand-symbol{background:linear-gradient(135deg,#7654f0 0%,#b45de4 58%,#ef78b0 100%);color:#fff;box-shadow:0 5px 18px rgba(173,91,220,.25)}
+.brand{color:#263448}
+.brand-muted{color:#8791a0}
+.nav-link.selected{background:#eef1f5;color:#34465f}
+.nav-link.selected svg{color:#526987}
+.nav-link:hover{background:#f5f6f8;color:#34465f}
+.button-primary{background:#2f4058;box-shadow:none;transform:none}
+.button-primary:hover{background:#3c506b;transform:none;box-shadow:0 2px 8px rgba(34,49,70,.12)}
+.button-secondary{background:#eef1f5;color:#3e5068}
+.button-secondary:hover{background:#e5e9ef}
+.page-header h1{background:none;background-clip:border-box;-webkit-background-clip:border-box;color:#283344;-webkit-text-fill-color:#283344}
+.metric-card,.panel{border-color:#e7eaf0;box-shadow:0 5px 18px rgba(31,42,58,.025)}
+.theme-toggle{background:#f0f2f5;color:#59677a}
+.theme-toggle:hover,.top-icon:hover{background:#e9edf2;color:#35465f}
+.topbar-right{gap:11px}
+.top-icon,.theme-toggle{width:36px;height:36px;min-width:36px;min-height:36px;flex:0 0 36px;border-radius:10px}
+.top-icon{background:transparent;color:#778394}
+.top-avatar-button,.topbar-right .top-avatar-button{width:36px;height:36px;min-width:36px;min-height:36px;flex:0 0 36px;aspect-ratio:1;border-radius:50%;padding:0;line-height:1;background:linear-gradient(140deg,#f4eaff,#ffe8f2);border:1px solid #eddff6;color:#7548bc;box-shadow:0 3px 10px rgba(173,91,220,.12)}
+.profile-avatar{background:linear-gradient(140deg,#f4eaff,#ffe8f2);border:1px solid #eddff6;color:#7548bc;box-shadow:0 3px 10px rgba(173,91,220,.12)}
+.topbar-right .top-avatar-button:hover{background:linear-gradient(140deg,#eee2ff,#ffdfef);border-color:#d8c4ef}
+.profile-card{margin-top:13px;padding:13px 8px 10px;border-top:1px solid #eceff3;border-radius:10px}
+.profile-card:hover{background:#f5f6f8}
+.profile-copy{min-width:0;flex:1}
+.profile-copy strong,.profile-copy span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sidebar-foot{display:none}
+.page-footer{gap:8px;padding:27px 0 10px;color:#8791a0;font-size:10px;letter-spacing:.01em}
+.page-footer .footer-brand{color:#536176;font-weight:700}
+.page-footer .footer-separator{color:#b4bbc5;font-size:12px;line-height:1}
+.page-footer small{margin:0;padding:0;border:0;color:#9aa3af;font-size:9px;font-weight:500}
+:root[data-theme="dark"] body{background:#111528}
+:root[data-theme="dark"] .brand-symbol{background:linear-gradient(135deg,#7654f0 0%,#b45de4 58%,#ef78b0 100%);box-shadow:0 5px 22px rgba(189,101,227,.28)}
+:root[data-theme="dark"] .brand{color:#eef0f7}
+:root[data-theme="dark"] .brand-muted{color:#9aa4b8}
+:root[data-theme="dark"] .nav-link.selected{background:#252d43;color:#e7ebf4}
+:root[data-theme="dark"] .nav-link.selected svg{color:#b9c7dc}
+:root[data-theme="dark"] .nav-link:hover{background:#1b2235;color:#e7ebf4}
+:root[data-theme="dark"] .button-primary{background:#536783;box-shadow:none}
+:root[data-theme="dark"] .button-primary:hover{background:#627995}
+:root[data-theme="dark"] .button-secondary{background:#242c40;color:#d5dbea}
+:root[data-theme="dark"] .button-secondary:hover{background:#2d3850}
+:root[data-theme="dark"] .page-header h1{background:none;color:#f0eff8;-webkit-text-fill-color:#f0eff8}
+:root[data-theme="dark"] .theme-toggle{background:#252d43;color:#cbd5e5}
+:root[data-theme="dark"] .theme-toggle:hover,:root[data-theme="dark"] .top-icon:hover{background:#303b54;color:#fff}
+:root[data-theme="dark"] .top-icon{color:#aeb8ca}
+:root[data-theme="dark"] .profile-avatar,:root[data-theme="dark"] .top-avatar-button,:root[data-theme="dark"] .topbar-right .top-avatar-button{background:linear-gradient(135deg,#55408d 0%,#87449f 58%,#b95791 100%);border-color:#895bb0;color:#fff0fb;box-shadow:0 5px 18px rgba(166,87,199,.24)}
+:root[data-theme="dark"] .topbar-right .top-avatar-button:hover{background:linear-gradient(135deg,#624b9f 0%,#9850ad 58%,#c5659d 100%);border-color:#a16bc6}
+:root[data-theme="dark"] .profile-card{border-color:#2b3348}
+:root[data-theme="dark"] .profile-card:hover{background:#1b2235}
+:root[data-theme="dark"] .page-footer{color:#929cb1}
+:root[data-theme="dark"] .page-footer .footer-brand{color:#c8d0df}
+:root[data-theme="dark"] .page-footer .footer-separator{color:#69758b}
+:root[data-theme="dark"] .page-footer small{color:#8792a8}
+@media(max-width:720px){.topbar-right{gap:8px}}
+
+
+/* eBay account integration */
+.ebay-integration-card{margin-top:14px;padding:17px 18px;border:1px solid #e4e8ee;border-radius:12px;background:#fafbfd;color:#344155}
+.ebay-integration-header{display:flex;align-items:center;justify-content:space-between;gap:14px}
+.ebay-integration-title{display:flex;align-items:center;gap:11px;min-width:0}
+.ebay-integration-icon{display:grid;place-items:center;width:34px;height:34px;flex:0 0 34px;border-radius:10px;background:#edf1f6;color:#52647f}
+.ebay-integration-title strong,.ebay-integration-title span{display:block}
+.ebay-integration-title strong{font-size:13px;font-weight:700;color:#344155}
+.ebay-integration-title div>span{margin-top:3px;font-size:11px;color:#778397}
+.ebay-connection-state{display:inline-flex;align-items:center;gap:6px;white-space:nowrap;border:1px solid #e1e6ed;border-radius:999px;padding:5px 9px;color:#778397;font-size:10px;font-weight:600}
+.ebay-connection-state i{width:6px;height:6px;border-radius:50%;background:#aab3c0}
+.ebay-connection-state.is-connected{background:#edf6f0;border-color:#d8e9dd;color:#3e7355}
+.ebay-connection-state.is-connected i{background:#4e9a6a}
+.ebay-connect-content{padding-top:14px}
+.ebay-connect-content p{max-width:690px;margin:0 0 13px;color:#657286;font-size:12px;line-height:1.6}
+.ebay-connect-content>small{display:block;margin-top:9px;color:#8a95a4;font-size:10px}
+.ebay-metrics{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin:15px 0}
+.ebay-metrics>div{padding:11px 12px;background:#f1f4f8;border-radius:9px}
+.ebay-metrics span,.ebay-metrics strong{display:block}
+.ebay-metrics span{color:#788497;font-size:10px}
+.ebay-metrics strong{margin-top:4px;color:#344155;font-size:19px;font-weight:700;font-variant-numeric:tabular-nums}
+.ebay-sync-row{display:flex;align-items:center;justify-content:space-between;gap:12px;border-top:1px solid #e7ebf0;padding-top:13px}
+.ebay-sync-row>span,.ebay-sync-row>div{display:flex;align-items:center;gap:8px}
+.ebay-sync-row>span{color:#748094;font-size:10px}
+.ebay-sync-row>div{gap:7px}
+.ebay-automatic-note{display:flex;align-items:center;gap:7px;margin:11px 0 0;color:#63816d;font-size:10px}
+.ebay-import-list{margin-top:15px;border-top:1px solid #e7ebf0;padding-top:12px}
+.ebay-list-heading{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}
+.ebay-list-heading strong{font-size:11px;color:#44536a}
+.ebay-list-heading span{font-size:10px;color:#8994a3}
+.ebay-listing-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:9px 0;border-bottom:1px solid #edf0f4}
+.ebay-listing-info{display:flex;flex-direction:column;gap:4px;min-width:0}
+.ebay-listing-info a,.ebay-order-title{display:inline-flex;align-items:center;gap:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#43536b;text-decoration:none;font-size:11px;font-weight:600}
+.ebay-listing-info a:hover{color:#263e61;text-decoration:underline}
+.ebay-listing-info>span{color:#8993a1;font-size:9px}
+.ebay-listing-row>strong{flex:0 0 auto;color:#40516a;font-size:11px;font-weight:650;font-variant-numeric:tabular-nums}
+.ebay-more-note{display:block;margin-top:8px;color:#8792a2;font-size:10px}
+.ebay-empty{display:flex;align-items:center;gap:8px;margin-top:14px;padding:12px;border-radius:9px;background:#f1f4f8;color:#7b8798;font-size:11px}
+.ebay-error,.ebay-message{margin:12px 0 0;padding:9px 11px;border-radius:8px;font-size:11px;line-height:1.5}
+.ebay-error{background:#fff0f0;color:#9d4242}
+.ebay-message{background:#edf6f0;color:#477457}
+.ebay-setup-links{display:flex;flex-wrap:wrap;gap:14px;margin-top:14px}
+.ebay-setup-links a{display:inline-flex;align-items:center;gap:4px;color:#7c899b;text-decoration:none;font-size:10px}
+.ebay-setup-links a:hover{color:#435671;text-decoration:underline}
+:root[data-theme="dark"] .ebay-integration-card{background:#171e31;border-color:#303a50;color:#dce3ef}
+:root[data-theme="dark"] .ebay-integration-icon{background:#252f46;color:#bdcadf}
+:root[data-theme="dark"] .ebay-integration-title strong,:root[data-theme="dark"] .ebay-metrics strong,:root[data-theme="dark"] .ebay-list-heading strong,:root[data-theme="dark"] .ebay-listing-row>strong{color:#dbe2ee}
+:root[data-theme="dark"] .ebay-integration-title div>span,:root[data-theme="dark"] .ebay-connect-content p,:root[data-theme="dark"] .ebay-metrics span,:root[data-theme="dark"] .ebay-sync-row>span,:root[data-theme="dark"] .ebay-list-heading span,:root[data-theme="dark"] .ebay-listing-info>span,:root[data-theme="dark"] .ebay-more-note,:root[data-theme="dark"] .ebay-connect-content>small{color:#929fb5}
+:root[data-theme="dark"] .ebay-connection-state{background:#242c40;border-color:#3a465e;color:#aab5c8}
+:root[data-theme="dark"] .ebay-connection-state.is-connected{background:#1f342e;border-color:#335344;color:#9cc7aa}
+:root[data-theme="dark"] .ebay-metrics>div,:root[data-theme="dark"] .ebay-empty{background:#20283c}
+:root[data-theme="dark"] .ebay-sync-row,:root[data-theme="dark"] .ebay-import-list{border-color:#303a50}
+:root[data-theme="dark"] .ebay-listing-row{border-color:#2a3449}
+:root[data-theme="dark"] .ebay-listing-info a,:root[data-theme="dark"] .ebay-order-title{color:#c4d0e2}
+:root[data-theme="dark"] .ebay-automatic-note{color:#91b79d}
+:root[data-theme="dark"] .ebay-error{background:#3a252d;color:#e7a4aa}
+:root[data-theme="dark"] .ebay-message{background:#20362e;color:#a4cfb1}
+:root[data-theme="dark"] .ebay-setup-links a{color:#9ca9bd}
+@media(max-width:640px){
+  .ebay-integration-card{padding:14px}
+  .ebay-integration-header,.ebay-sync-row{align-items:flex-start;flex-direction:column}
+  .ebay-metrics{gap:6px}
+  .ebay-metrics>div{padding:9px}
+  .ebay-metrics strong{font-size:16px}
+  .ebay-listing-row{align-items:flex-start;flex-direction:column;gap:5px}
+}
+
+
+/* Shared integration accordion and connection indicators */
+.gmail-panel-heading>div{align-items:center}
+.gmail-panel-icon,.ebay-integration-icon,.backup-integration-icon{display:grid;place-items:center;align-self:center;line-height:0}
+.gmail-panel-icon svg,.ebay-integration-icon svg,.backup-integration-icon svg{display:block;flex:none}
+.integration-status{display:inline-flex;align-items:center;gap:6px;flex:0 0 auto;padding:5px 9px;border:1px solid;border-radius:999px;font-size:9px;font-weight:700;white-space:nowrap}
+.integration-status i{width:6px;height:6px;display:block;border-radius:50%;background:currentColor}
+.integration-status.is-connected{background:#edf6f0;border-color:#d6e9dc;color:#32784f}
+.integration-status.is-disconnected{background:#fff0f0;border-color:#f0d7d7;color:#b84c4c}
+.ebay-integration-card{display:block;margin-top:13px;padding:0 16px;border:1px solid #e5e9ef;border-radius:11px;background:#fff;color:inherit}
+.ebay-panel-heading{min-height:64px;align-items:center;cursor:pointer;list-style:none}
+.ebay-panel-heading::-webkit-details-marker{display:none}
+.ebay-panel-heading>div{align-items:center}
+.ebay-panel-heading .gmail-panel-icon{background:#f0f3f8;color:#536681}
+.ebay-panel-content{padding:0 0 15px}
+.backup-integration-panel{display:block;margin-top:13px;padding:0 15px;border:1px solid #e5e9ef;border-radius:11px;background:#fff}
+.backup-integration-panel>.gmail-panel-heading{min-height:62px;align-items:center;cursor:pointer;list-style:none}
+.backup-integration-panel>.gmail-panel-heading::-webkit-details-marker{display:none}
+.backup-integration-panel .backup-integration-icon{background:#f0f3f8;color:#536681}
+.backup-integration-panel>.backup-section{padding:0 0 15px;border:0;margin:0}
+.backup-integration-panel .backup-heading{padding-top:3px}
+.backup-integration-panel .backup-heading>svg{display:none}
+.integration-list>.gmail-panel{margin-top:10px}
+/* Keep the full outline on the final accordion card as well. */
+.integration-list .gmail-panel:last-child{border-bottom:1px solid #e8e5f0}
+.integrations-page .settings-group{margin-top:22px}
+.integrations-page .settings-group-heading{margin-bottom:10px}
+:root[data-theme="dark"] .integration-status.is-connected{background:#1f342e;border-color:#335344;color:#9cc7aa}
+:root[data-theme="dark"] .integration-status.is-disconnected{background:#3a252d;border-color:#624047;color:#e7a4aa}
+:root[data-theme="dark"] .ebay-integration-card,:root[data-theme="dark"] .backup-integration-panel{background:#171e31;border-color:#303a50;color:#dce3ef}
+:root[data-theme="dark"] .ebay-panel-heading .gmail-panel-icon,:root[data-theme="dark"] .backup-integration-panel .backup-integration-icon{background:#252f46;color:#bdcadf}
+@media(max-width:640px){
+  .ebay-integration-card,.backup-integration-panel{padding-left:12px;padding-right:12px}
+  .ebay-panel-heading,.backup-integration-panel>.gmail-panel-heading{gap:8px}
+  .integration-status{padding:4px 7px;font-size:8px}
+}
+
+
+/* Shipping center */
+.shipping-center-page{display:grid;gap:18px}
+.shipping-center-header{display:flex;align-items:flex-end;justify-content:space-between;gap:18px;margin-bottom:2px}
+.shipping-center-header h1{margin:0 0 7px;font:800 28px Manrope,sans-serif;letter-spacing:-1px;background:linear-gradient(105deg,#252d43,#7654e9 62%,#e173ad);background-clip:text;-webkit-background-clip:text;color:transparent}
+.shipping-center-header p{max-width:650px;margin:0;color:#8791a3;font-size:12px;line-height:1.65}
+.shipping-refresh-button{flex:0 0 auto;min-height:42px}
+.shipping-provider-banner{display:flex;align-items:center;gap:13px;padding:15px 17px;border:1px solid #e5def5;border-radius:13px;background:linear-gradient(110deg,#faf7ff,#fffafd)}
+.shipping-provider-symbol{width:40px;height:40px;flex:0 0 40px;display:grid;place-items:center;border-radius:11px;background:#efe8ff;color:#8058db}
+.shipping-provider-banner>div:nth-child(2){display:grid;gap:4px;min-width:0;flex:1}
+.shipping-provider-banner strong{font-size:12px;color:#3e405b}
+.shipping-provider-banner span{font-size:10px;line-height:1.55;color:#858ba0}
+.shipping-provider-state{display:inline-flex;align-items:center;gap:6px;white-space:nowrap;padding:6px 9px;border-radius:999px;background:#f5edf9;border:1px solid #eadcf2;color:#89529c!important;font-size:9px!important;font-weight:800}
+.shipping-provider-state i{width:6px;height:6px;border-radius:50%;background:currentColor}
+.shipping-provider-state.is-active{background:#eaf6ef;border-color:#d4e9dc;color:#39805a!important}
+.shipping-metric-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:11px}
+.shipping-metric-card{display:grid;gap:5px;min-height:99px;padding:14px 15px;border:1px solid #e9e6f0;border-radius:12px;background:#fff;box-shadow:0 5px 18px rgba(35,30,64,.025)}
+.shipping-metric-card span{font-size:10px;font-weight:700;color:#838ba0}
+.shipping-metric-card strong{font:800 24px Manrope,sans-serif;letter-spacing:-.5px;color:#32384e;font-variant-numeric:tabular-nums}
+.shipping-metric-card small{font-size:9px;color:#a0a6b6}
+.shipping-list-panel{padding:18px;border:1px solid #e8e5f0;border-radius:14px;background:#fff;box-shadow:0 7px 24px rgba(35,30,64,.03)}
+.shipping-list-toolbar{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:14px}
+.shipping-list-toolbar h2{margin:0 0 4px;font:750 15px Manrope,sans-serif;color:#353b52}
+.shipping-list-toolbar p{margin:0;font-size:10px;color:#969daf}
+.shipping-list-controls{display:flex;align-items:center;justify-content:flex-end;gap:9px;flex-wrap:wrap}
+.shipping-filter-group{display:flex;gap:3px;padding:3px;border:1px solid #ece9f2;border-radius:9px;background:#f8f7fb}
+.shipping-filter-group button{border:0;border-radius:7px;padding:7px 10px;background:transparent;color:#858ba0;font-size:9px;font-weight:700;white-space:nowrap}
+.shipping-filter-group button.active{background:#eee8ff;color:#7651dc;box-shadow:0 1px 3px rgba(45,35,90,.08)}
+.shipping-search{width:205px;min-height:35px;padding:0 10px;border:1px solid #e8e5ef;border-radius:8px;background:#fff;color:#41465b;font-size:10px;outline:none}
+.shipping-search:focus{border-color:#a88af0;box-shadow:0 0 0 3px rgba(139,102,223,.12)}
+.shipping-shipment-list{display:grid;gap:9px}
+.shipping-shipment-card{padding:13px 14px;border:1px solid #ece9f2;border-radius:11px;background:#fff;transition:border-color .15s ease,box-shadow .15s ease}
+.shipping-shipment-card:hover{border-color:#d9cdef;box-shadow:0 4px 14px rgba(63,45,111,.04)}
+.shipping-shipment-main{display:flex;align-items:center;gap:11px;min-width:0}
+.shipping-shipment-icon{width:37px;height:37px;flex:0 0 37px;display:grid;place-items:center;border-radius:10px;background:#eee9ff;color:#7956d4}
+.shipping-shipment-icon.outgoing{background:#e8efff;color:#5e7bc4}
+.shipping-shipment-copy{display:grid;gap:3px;flex:1;min-width:0}
+.shipping-shipment-copy strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#343a50;font-size:11px;font-weight:750}
+.shipping-shipment-copy span{color:#858ca1;font-size:9px}
+.shipping-shipment-copy small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#a0a6b5;font-size:9px;font-variant-numeric:tabular-nums}
+.shipping-status-pill{display:inline-flex;align-items:center;gap:6px;flex:0 0 auto;white-space:nowrap;padding:6px 9px;border:1px solid;border-radius:999px;font-size:9px;font-weight:750}
+.shipping-status-pill.tone-success{background:#eaf6ef;border-color:#d4e9dc;color:#39805a}
+.shipping-status-pill.tone-info{background:#edf2ff;border-color:#dce5ff;color:#5472bc}
+.shipping-status-pill.tone-warning{background:#fff6e8;border-color:#f2e5c8;color:#a57933}
+.shipping-status-pill.tone-danger{background:#fff0f1;border-color:#f0d9dc;color:#b55362}
+.shipping-status-pill.tone-neutral{background:#f4f3f7;border-color:#e8e6ee;color:#858a9d}
+.shipping-latest-event{display:grid;gap:6px;margin:11px 0 0 48px;padding:9px 11px;border-left:2px solid #ded5f6;background:#faf9fd;color:#646b82;font-size:10px;line-height:1.55}
+.shipping-latest-event>small{display:inline-flex;align-items:center;gap:5px;color:#969caf;font-size:9px}
+.shipping-shipment-footer{display:flex;justify-content:space-between;align-items:center;gap:12px;margin:11px 0 0 48px;padding-top:9px;border-top:1px solid #f0edf4}
+.shipping-shipment-footer>span{color:#999fb0;font-size:9px}
+.shipping-shipment-footer a,.shipping-integration-links a{display:inline-flex;align-items:center;gap:5px;color:#7656d3;text-decoration:none;font-size:9px;font-weight:750;white-space:nowrap}
+.shipping-shipment-footer a:hover,.shipping-integration-links a:hover{text-decoration:underline}
+.shipping-row-error{display:flex;align-items:center;gap:6px;margin:9px 0 0 48px;color:#b65361;font-size:9px}
+.shipping-feedback{display:flex;align-items:flex-start;gap:7px;margin:0 0 11px;padding:9px 11px;border-radius:8px;font-size:10px;line-height:1.5}
+.shipping-feedback.is-error{background:#fff0f1;color:#a94a58}
+.shipping-feedback.is-success{background:#edf7f0;color:#3f7d59}
+.shipping-empty-state{min-height:160px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;padding:25px 14px;text-align:center;color:#9c91bd}
+.shipping-empty-state strong{color:#555b70;font-size:11px}
+.shipping-empty-state p{max-width:420px;margin:0;color:#969daf;font-size:10px;line-height:1.6}
+.shipping-integration-panel{margin-top:10px}
+.shipping-integration-content>p{margin:0;color:#8a91a5;font-size:10px;line-height:1.6}
+.shipping-integration-links{display:flex;flex-wrap:wrap;gap:12px}
+.shipping-integration-content>small{color:#9a9fb0;font-size:9px;line-height:1.5}
+:root[data-theme="dark"] .shipping-center-header h1{background:linear-gradient(105deg,#f6efff,#c18aff 62%,#f18ebc);background-clip:text;-webkit-background-clip:text;color:transparent}
+:root[data-theme="dark"] .shipping-center-header p{color:#a1a8c0}
+:root[data-theme="dark"] .shipping-provider-banner{background:linear-gradient(110deg,#211d38,#241d32);border-color:#443659}
+:root[data-theme="dark"] .shipping-provider-symbol{background:#35274e;color:#d1b3ff}
+:root[data-theme="dark"] .shipping-provider-banner strong{color:#ece7fb}
+:root[data-theme="dark"] .shipping-provider-banner span{color:#a3a9c0}
+:root[data-theme="dark"] .shipping-provider-state{background:#332540;border-color:#55385e;color:#d9a8ea!important}
+:root[data-theme="dark"] .shipping-provider-state.is-active{background:#1c382f;border-color:#315c49;color:#9bd4b2!important}
+:root[data-theme="dark"] .shipping-metric-card,:root[data-theme="dark"] .shipping-list-panel,:root[data-theme="dark"] .shipping-shipment-card{background:#171e31;border-color:#303a50;box-shadow:none}
+:root[data-theme="dark"] .shipping-metric-card span,:root[data-theme="dark"] .shipping-metric-card small,:root[data-theme="dark"] .shipping-list-toolbar p{color:#9aa5bd}
+:root[data-theme="dark"] .shipping-metric-card strong,:root[data-theme="dark"] .shipping-list-toolbar h2,:root[data-theme="dark"] .shipping-shipment-copy strong{color:#eeeafd}
+:root[data-theme="dark"] .shipping-filter-group{background:#1d2439;border-color:#353b55}
+:root[data-theme="dark"] .shipping-filter-group button{color:#a5abc1}
+:root[data-theme="dark"] .shipping-filter-group button.active{background:#35294f;color:#d7b8ff}
+:root[data-theme="dark"] .shipping-search{background:#141a2c;border-color:#3b405a;color:#e8e5f5}
+:root[data-theme="dark"] .shipping-shipment-copy span,:root[data-theme="dark"] .shipping-shipment-copy small{color:#9da6be}
+:root[data-theme="dark"] .shipping-shipment-icon{background:#302449;color:#d1b3ff}
+:root[data-theme="dark"] .shipping-shipment-icon.outgoing{background:#253451;color:#a9c5ff}
+:root[data-theme="dark"] .shipping-status-pill.tone-success{background:#1f382f;border-color:#315a47;color:#9bd4b2}
+:root[data-theme="dark"] .shipping-status-pill.tone-info{background:#243452;border-color:#354b70;color:#a9c5ff}
+:root[data-theme="dark"] .shipping-status-pill.tone-warning{background:#3b3022;border-color:#635038;color:#e5c08a}
+:root[data-theme="dark"] .shipping-status-pill.tone-danger{background:#3b252f;border-color:#643a49;color:#efa7b4}
+:root[data-theme="dark"] .shipping-status-pill.tone-neutral{background:#252b40;border-color:#3b4159;color:#b2bad0}
+:root[data-theme="dark"] .shipping-latest-event{background:#1c2238;border-color:#51406d;color:#c0bad3}
+:root[data-theme="dark"] .shipping-latest-event>small,:root[data-theme="dark"] .shipping-shipment-footer>span{color:#9ca5bd}
+:root[data-theme="dark"] .shipping-shipment-footer{border-color:#30364e}
+:root[data-theme="dark"] .shipping-shipment-footer a,:root[data-theme="dark"] .shipping-integration-links a{color:#c8a0ff}
+:root[data-theme="dark"] .shipping-feedback.is-error{background:#3b252f;color:#efa7b4}
+:root[data-theme="dark"] .shipping-feedback.is-success{background:#1f382f;color:#9bd4b2}
+:root[data-theme="dark"] .shipping-empty-state strong{color:#e6e2f2}
+:root[data-theme="dark"] .shipping-empty-state p,:root[data-theme="dark"] .shipping-integration-content>p,:root[data-theme="dark"] .shipping-integration-content>small{color:#a1a8c0}
+:root[data-theme="dark"] .shipping-integration-content .shipping-feedback.is-error{color:#efa7b4}
+@media(max-width:860px){
+  .shipping-metric-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .shipping-list-toolbar{flex-direction:column}
+  .shipping-list-controls{width:100%;justify-content:space-between}
+  .shipping-search{flex:1;width:auto;min-width:150px}
+}
+@media(max-width:620px){
+  .shipping-center-header{align-items:flex-start;flex-direction:column}
+  .shipping-refresh-button{width:100%}
+  .shipping-provider-banner{align-items:flex-start;flex-wrap:wrap;padding:13px}
+  .shipping-provider-state{margin-left:53px}
+  .shipping-metric-grid{gap:8px}
+  .shipping-metric-card{min-height:88px;padding:11px}
+  .shipping-metric-card strong{font-size:21px}
+  .shipping-list-panel{padding:12px}
+  .shipping-list-controls{align-items:stretch;flex-direction:column}
+  .shipping-filter-group{width:100%;justify-content:space-between}
+  .shipping-filter-group button{flex:1;padding:8px 5px}
+  .shipping-search{width:100%;min-height:40px}
+  .shipping-shipment-main{align-items:flex-start;flex-wrap:wrap}
+  .shipping-shipment-copy{flex:1 1 calc(100% - 50px)}
+  .shipping-status-pill{margin-left:48px}
+  .shipping-latest-event,.shipping-shipment-footer,.shipping-row-error{margin-left:0}
+  .shipping-shipment-footer{align-items:flex-start;flex-direction:column}
+}

@@ -12,5 +12,12 @@
   "ai": {
     "binding": "AI"
   },
-  "previews": {}
+  "triggers": {
+    "crons": ["0 */6 * * *"]
+  },
+  "previews": {
+    "ai": {
+      "binding": "AI"
+    }
+  }
 }

@@ -807,7 +807,7 @@ function App() {
       })
     }, 350)
     return () => window.clearTimeout(timer)
-  }, [currency, theme, gmailClientId, gmailLearningHints, userId, cloudReady, cloudLoadRetry])
+  }, [currency, theme, gmailClientId, gmailLearningHints, userId, cloudReady, cloudLoadRetry, cloudSyncRetry])
 
   useEffect(() => {
     if (!userId || !cloudReady || loadedUserIdRef.current !== userId) return
@@ -1255,7 +1255,7 @@ function App() {
         <header className="topbar">
           <button className="mobile-menu" onClick={() => setMobileNav(true)}><Menu size={20}/></button>
           <div className="breadcrumbs"><span>Workspace</span><b>/</b><strong>{section}</strong></div>
-          <div className="topbar-right"><span className={'local-status ' + (cloudSyncState === 'error' ? 'cloud-error-status' : '')}><i/>{cloudSyncState === 'saving' ? 'Synchronisiert …' : cloudSyncState === 'error' ? 'Sync-Fehler' : 'Cloud synchronisiert'}</span><button className="top-icon" aria-label="Hilfe" title="Hilfe" onClick={() => setShowHelp(true)}><CircleHelp size={18}/></button><button className="theme-toggle" aria-label={theme === 'dark' ? 'Helles Design aktivieren' : 'Dark Mode aktivieren'} title={theme === 'dark' ? 'Helles Design' : 'Dark Mode'} onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}>{theme === 'dark' ? <Sun size={16}/> : <Moon size={16}/>}</button><button className="top-avatar top-avatar-button" onClick={() => setSection(current => current === 'Einstellungen' ? 'Übersicht' : 'Einstellungen')} title="Einstellungen öffnen oder schließen" aria-expanded={section === 'Einstellungen'}>N</button></div>
+          <div className="topbar-right"><span className={'local-status ' + (cloudSyncState === 'error' ? 'cloud-error-status' : '')}><i/>{cloudSyncState === 'saving' ? 'Wird synchronisiert …' : cloudSyncState === 'error' ? 'Sync-Fehler' : 'Cloud synchronisiert'}</span><button className="top-icon" aria-label="Hilfe" title="Hilfe" onClick={() => setShowHelp(true)}><CircleHelp size={18}/></button><button className="theme-toggle" aria-label={theme === 'dark' ? 'Helles Design aktivieren' : 'Dark Mode aktivieren'} title={theme === 'dark' ? 'Helles Design' : 'Dark Mode'} onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}>{theme === 'dark' ? <Sun size={16}/> : <Moon size={16}/>}</button><button className="top-avatar top-avatar-button" onClick={() => setSection(current => current === 'Einstellungen' ? 'Übersicht' : 'Einstellungen')} title="Einstellungen öffnen oder schließen" aria-expanded={section === 'Einstellungen'}>{(authSession?.user.user_metadata?.full_name || authSession?.user.email || 'R').toString().slice(0, 1).toUpperCase()}</button></div>
         </header>
 
         <div className="page-wrap">
@@ -2002,7 +2002,7 @@ function GmailShippingPanel({ products, onApply, initialClientId, initialLearnin
     setLearningHints(current => mergeGmailLearningHint(current, learned))
     setCandidates(current => current.filter(item => item.id !== candidate.id))
     setMessage(learned
-      ? 'Versanddaten übernommen. Die bestätigte Absender-/Betreffkombination wurde lokal für ähnliche künftige Mails gemerkt.'
+      ? 'Versanddaten übernommen. Die bestätigte Absender-/Betreffkombination wurde in deinem Konto für ähnliche künftige Mails gespeichert.'
       : 'Versanddaten wurden dem Produkt zugeordnet. Für eine sichere Lernregel enthielt der Betreff zu wenige eindeutige Produktmerkmale.')
   }
 
@@ -2015,7 +2015,7 @@ function GmailShippingPanel({ products, onApply, initialClientId, initialLearnin
         <input type="checkbox" checked={aiMatching} onChange={event => setAiMatching(event.target.checked)}/>
         <span><strong>KI-Produktabgleich aktivieren (4-Modelle-Ensemble)</strong><small>Optional: BGE-M3, Google EmbeddingGemma 2 und Qwen3 suchen unabhängig semantisch passende Produkte; BGE-Reranker prüft die besten Kandidaten direkt gegeneinander. Nur minimierte Textausschnitte, Absender-Domain und Produktdaten gehen an Cloudflare Workers AI. Deine bestätigten Betreff-/Absender-Zuordnungen lernt die App zusätzlich lokal. Die Vorschläge bleiben prüfpflichtig.</small></span>
       </label>
-      <small className="gmail-learning-info">{learningHints.length} lokal gemerkte Zuordnungsregel(n) aus von dir bestätigten Versandmails. Gespeichert werden nur Absender-Domain und markante Betreffwörter.</small>
+      <small className="gmail-learning-info">{learningHints.length} gespeicherte Zuordnungsregel(n) aus von dir bestätigten Versandmails. Gespeichert werden nur Absender-Domain und markante Betreffwörter.</small>
       <div className="gmail-setup-links"><a href="https://console.cloud.google.com/apis/library/gmail.googleapis.com" target="_blank" rel="noreferrer">Gmail API aktivieren <ExternalLink size={11}/></a><a href="https://console.cloud.google.com/auth/clients" target="_blank" rel="noreferrer">OAuth Client-ID erstellen <ExternalLink size={11}/></a><a href="https://developers.google.com/identity/oauth2/web/guides/use-token-model" target="_blank" rel="noreferrer">Google-Anleitung <ExternalLink size={11}/></a></div>
       <div className="gmail-origin"><span>Autorisierte JavaScript-Quelle:</span><code>{window.location.origin}</code><button type="button" onClick={() => void navigator.clipboard?.writeText(window.location.origin)}>Kopieren</button></div>
     </div>
@@ -2032,7 +2032,7 @@ function GmailShippingPanel({ products, onApply, initialClientId, initialLearnin
         <div className="gmail-candidate-actions"><label className="field"><span>Produkt zuordnen</span><select value={candidate.suggestedProductId} onChange={event => setCandidates(current => current.map(item => item.id === candidate.id ? { ...item, suggestedProductId: event.target.value, matchSource: event.target.value ? 'Manuell' : undefined, matchReason: undefined } : item))}><option value="">Produkt auswählen …</option>{products.map(product => <option key={product.id} value={product.id}>{product.name} · {product.status}</option>)}</select></label><label className="field"><span>Versandrichtung</span><select value={candidate.direction} onChange={event => setCandidates(current => current.map(item => item.id === candidate.id ? { ...item, direction: event.target.value as ShippingDirection } : item))}><option value="incoming">Eingehend · Einkauf</option><option value="outgoing">Ausgehend · Verkauf</option></select></label><button type="button" className="button-primary" onClick={() => applyCandidate(candidate)} disabled={!candidate.suggestedProductId}>Übernehmen</button><button type="button" className="button-ghost" onClick={() => setCandidates(current => current.filter(item => item.id !== candidate.id))}>Verwerfen</button></div>
       </article>)}
     </div>}
-    <small className="gmail-privacy">Gmail wird nur lesend durchsucht. Ohne aktivierte KI bleibt die E-Mail-Auswertung im Browser; bestätigte Lernregeln bleiben lokal auf diesem Gerät. Bei aktivierter KI werden minimierte Textausschnitte und Produktdaten an Cloudflare Workers AI gesendet und dort mit bis zu drei Modellen abgeglichen. Der kurzlebige Gmail-Token wird nur zur Zugriffsprüfung verwendet und nicht gespeichert. Treffer werden nie ohne deine Bestätigung einem Produkt zugeordnet.</small>
+    <small className="gmail-privacy">Gmail wird nur lesend durchsucht. Ohne aktivierte KI bleibt die E-Mail-Auswertung im Browser; bestätigte Lernregeln werden mit deinem Konto synchronisiert. Bei aktivierter KI werden minimierte Textausschnitte und Produktdaten an Cloudflare Workers AI gesendet und dort mit bis zu drei Modellen abgeglichen. Der kurzlebige Gmail-Token wird nur zur Zugriffsprüfung verwendet und nicht gespeichert. Treffer werden nie ohne deine Bestätigung einem Produkt zugeordnet.</small>
   </section>
 }
 

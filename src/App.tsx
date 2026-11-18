@@ -508,9 +508,9 @@ async function createBackupPdf(archive: Blob, products: Product[], receiptCount:
   gap(12)
   write('INHALT DER SICHERUNG', 10, bold, accent)
   write('Produkte: ' + products.length)
-  write('Originalbelege im lokalen Belegspeicher: ' + receiptCount)
+  write('Originalbelege im privaten Cloud-Speicher: ' + receiptCount)
   write('Gespeicherte Produktdaten, Verkaufsdaten, Kosten, Mengen, Kategorien, Plattformen und Bildquellen')
-  write('Alle gespeicherten Website-Einstellungen und lokale Speicherwerte')
+  write('Währung, Design und Gmail-Lernregeln des angemeldeten Kontos')
   gap(18)
   write('PRODUKTUEBERSICHT', 11, bold, accent)
   if (products.length === 0) write('Es waren keine Produkte gespeichert.')
@@ -564,6 +564,7 @@ function App() {
   const [cloudSyncError, setCloudSyncError] = useState('')
   const [cloudSyncState, setCloudSyncState] = useState<'idle' | 'saving' | 'synced' | 'error'>('idle')
   const [cloudLoadRetry, setCloudLoadRetry] = useState(0)
+  const [cloudSyncRetry, setCloudSyncRetry] = useState(0)
   const [products, setProducts] = useState<Product[]>([])
   const [gmailClientId, setGmailClientId] = useState('')
   const [gmailLearningHints, setGmailLearningHints] = useState<GmailLearningHint[]>([])
@@ -762,9 +763,14 @@ function App() {
             const { error } = await supabase.from('products').delete().eq('user_id', userId).in('id', removed)
             if (error) throw error
           }
+          const nextReceiptPaths = new Set(snapshot.map(item => item.receiptPath).filter(Boolean))
+          const obsoleteReceiptPaths = [...new Set(previous.map(item => item.receiptPath).filter(Boolean))]
+            .filter(path => !nextReceiptPaths.has(path))
           syncedProductsRef.current = snapshot
           setCloudSyncState('synced')
           setCloudSyncError('')
+          // Remove receipt objects only after their product changes are confirmed in Postgres.
+          await Promise.all(obsoleteReceiptPaths.map(path => deleteProductReceipt(path).catch(() => undefined)))
         } catch (error) {
           setCloudSyncState('error')
           setCloudSyncError(error instanceof Error ? error.message : 'Änderungen konnten nicht synchronisiert werden.')
@@ -772,7 +778,7 @@ function App() {
       })
     }, 350)
     return () => window.clearTimeout(timer)
-  }, [products, userId, cloudReady, cloudLoadRetry])
+  }, [products, userId, cloudReady, cloudLoadRetry, cloudSyncRetry])
 
   useEffect(() => {
     if (!userId || !cloudReady || loadedUserIdRef.current !== userId) return
@@ -1046,8 +1052,46 @@ function App() {
           setGmailLearningHints([])
         }
       }
+      const previousProducts = syncedProductsRef.current
+      const productRows = finalProducts.map(product => productToCloudRow(product, userId))
+      if (productRows.length) {
+        const { error } = await supabase.from('products').upsert(productRows, { onConflict: 'id' })
+        if (error) throw error
+      }
+      const { data: existingRows, error: readExistingError } = await supabase.from('products').select('id').eq('user_id', userId)
+      if (readExistingError) throw readExistingError
+      const restoredIds = new Set(finalProducts.map(product => product.id))
+      const obsoleteIds = (existingRows || []).map((row: { id: string }) => row.id).filter((id: string) => !restoredIds.has(id))
+      if (obsoleteIds.length) {
+        const { error } = await supabase.from('products').delete().eq('user_id', userId).in('id', obsoleteIds)
+        if (error) throw error
+      }
+
+      const restoredSettings = {
+        currency,
+        theme,
+        gmailClientId: gmailClientId.trim(),
+        gmailLearningHints,
+      }
+      const { error: settingsWriteError } = await supabase.from('user_settings').upsert({
+        user_id: userId,
+        currency: restoredSettings.currency,
+        theme: restoredSettings.theme,
+        gmail_client_id: restoredSettings.gmailClientId,
+        gmail_learning_hints: restoredSettings.gmailLearningHints,
+        updated_at: new Date().toISOString(),
+      }, { onConflict: 'user_id' })
+      if (settingsWriteError) throw settingsWriteError
+
+      syncedProductsRef.current = finalProducts
+      settingsSnapshotRef.current = JSON.stringify(restoredSettings)
       setProducts(finalProducts)
       restoreCommitted = true
+      const nextReceiptPaths = new Set(finalProducts.map(item => item.receiptPath).filter(Boolean))
+      const obsoleteReceiptPaths = [...new Set(previousProducts.map(item => item.receiptPath).filter(Boolean))]
+        .filter(path => !nextReceiptPaths.has(path))
+      await Promise.all(obsoleteReceiptPaths.map(path => deleteProductReceipt(path).catch(() => undefined)))
+      setCloudSyncState('synced')
       setBackupMessage('Wiederherstellung erfolgreich: ' + finalProducts.length + ' Produkte und ' + Object.keys(newPaths).length + ' Originalbelege in dein Cloud-Konto importiert.')
     } catch (error) {
       if (!restoreCommitted) await Promise.all(createdPaths.map(path => deleteProductReceipt(path).catch(() => undefined)))
@@ -1075,8 +1119,7 @@ function App() {
   async function saveProduct(batch: Product[], invoiceFile?: File | null): Promise<boolean> {
     if (batch.length === 0) return false
     setDataError('')
-    const previousReceiptPath = editing?.receiptPath || ''
-    let receiptPath = batch[0].receiptPath || ''
+      let receiptPath = batch[0].receiptPath || ''
 
     try {
       if (!userId) throw new Error('Deine Sitzung ist abgelaufen. Bitte melde dich erneut an.')
@@ -1091,10 +1134,6 @@ function App() {
       ? current.map(product => product.id === savedRows[0].id ? savedRows[0] : product)
       : [...savedRows, ...current])
 
-    if (previousReceiptPath && previousReceiptPath !== receiptPath &&
-        !products.some(product => product.id !== editing?.id && product.receiptPath === previousReceiptPath)) {
-      try { await deleteProductReceipt(previousReceiptPath) } catch { setDataError('Produkt gespeichert, der alte Originalbeleg konnte aber nicht entfernt werden.') }
-    }
     setShowForm(false)
     setEditing(null)
     return true
@@ -1110,11 +1149,7 @@ function App() {
   }
   async function deleteProduct(id: string) {
     if (!window.confirm('Möchtest du dieses Produkt wirklich löschen?')) return
-    const productToDelete = products.find(product => product.id === id)
     setProducts(current => current.filter(p => p.id !== id))
-    if (productToDelete?.receiptPath && !products.some(product => product.id !== id && product.receiptPath === productToDelete.receiptPath)) {
-      try { await deleteProductReceipt(productToDelete.receiptPath) } catch { setDataError('Produkt gelöscht, der zugehörige Beleg konnte aber nicht entfernt werden.') }
-    }
   }
   function openNew() { setEditing(null); setShowForm(true) }
   function applyGmailTracking(payload: { productId: string; direction: ShippingDirection; carrier: string; trackingNumber: string; trackingUrl: string }): boolean {
@@ -1189,7 +1224,7 @@ function App() {
 
         <div className="page-wrap">
           {dataError && <div className="app-alert error" role="alert">{dataError}</div>}
-          {cloudSyncError && <div className="app-alert error" role="alert">Cloud-Synchronisierung fehlgeschlagen: {cloudSyncError} <button type="button" onClick={() => { setCloudSyncError(''); setCloudLoadRetry(value => value + 1) }}>Erneut versuchen</button></div>}
+          {cloudSyncError && <div className="app-alert error" role="alert">Cloud-Synchronisierung fehlgeschlagen: {cloudSyncError} <button type="button" onClick={() => { setCloudSyncError(''); setCloudSyncRetry(value => value + 1) }}>Erneut versuchen</button></div>}
           {section === 'Übersicht' && (
             <>
               <div className="page-header"><div><div className="overline">DEIN BUSINESS AUF EINEN BLICK</div><h1>Übersicht</h1><p>Willkommen zurück. Hier ist dein aktueller Überblick.</p></div><button className="button-primary" onClick={openNew}><Plus size={17}/> Produkt hinzufügen</button></div>

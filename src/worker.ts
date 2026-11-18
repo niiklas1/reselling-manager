@@ -299,7 +299,7 @@ async function matchShippingProducts(request: Request, env: Env): Promise<Respon
           query: rerankerQueries[candidateIndex],
           contexts: shortlist.map(item => {
             const product = cleanProducts[item.productIndex]
-            return { text: 'Name: ' + product.name + '. Kategorie: ' + product.category + '. Plattform oder Shop: ' + product.platform }
+            return { text: product.name + '. Kategorie: ' + product.category + '. Händler oder Verkaufsplattform: ' + product.platform + '.' }
           }),
           top_k: shortlist.length,
         })
@@ -338,7 +338,7 @@ async function matchShippingProducts(request: Request, env: Env): Promise<Respon
       ? bgeRank <= 2 && gemmaRank <= 2
       : bge.length === total ? bgeRank <= 1 : gemmaRank <= 1
     const enoughEvidence = hasReranker
-      ? best.rerankerScore >= 0.22 && (best.lexicalScore >= 0.08 || modelAgreement || best.rerankerScore >= 0.62)
+      ? best.rerankerScore >= 0.3 && (best.lexicalScore >= 0.08 || modelAgreement || best.rerankerScore >= 0.62)
       : modelAgreement && (best.lexicalScore >= 0.18 || normalizedCosine(Math.max(best.bgeScore, best.gemmaScore)) >= 0.82)
     const clearLead = !second || best.score - second.score >= (modelAgreement ? 0.055 : 0.085)
     const approved = Boolean(best && best.score >= (hasReranker ? 0.48 : 0.62) && enoughEvidence && clearLead)

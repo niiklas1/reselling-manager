@@ -1132,7 +1132,7 @@ async function shippingStatus(request: Request, env: Env): Promise<Response> {
       'shipping_trackings?select=id,product_id,direction,tracking_number,carrier,tracking_url,provider_registered,provider_carrier,tracking_status,provider_status,provider_sub_status,latest_event,latest_location,latest_event_at,estimated_delivery_from,estimated_delivery_to,last_synced_at,tracking_error&user_id=eq.' + encodeURIComponent(user.id) + '&order=updated_at.desc&limit=1000',
     )
     const apiAvailable = Boolean(env.TRACKING_17TRACK_API_TOKEN)
-    const webhookConfigured = Boolean(env.TRACKING_17TRACK_WEBHOOK_SECRET)
+    const webhookConfigured = Boolean(env.TRACKING_17TRACK_WEBHOOK_SECRET || env.TRACKING_17TRACK_API_TOKEN)
     return ebayJson({
       apiAvailable,
       webhookConfigured,
@@ -1227,9 +1227,10 @@ async function shippingSync(request: Request, env: Env): Promise<Response> {
       })
     }
 
-    const pending = desiredRows.filter(row => !row.provider_registered)
+    const pending = desiredRows.filter(row => !row.provider_registered && !row.tracking_error)
     let registered = 0
     const rejectedNumbers = new Set<string>()
+    const acceptedIds = new Set<string>()
     for (let offset = 0; offset < pending.length; offset += 40) {
       const batch = pending.slice(offset, offset + 40)
       const result = await call17Track(env, 'register', batch.map(row => ({
@@ -1244,6 +1245,7 @@ async function shippingSync(request: Request, env: Env): Promise<Response> {
         const tag = trackingString(item.tag, 100)
         const id = tag.startsWith('rm:') ? tag.slice(3) : batch.find(row => row.tracking_number === number)?.id
         if (!id) continue
+        acceptedIds.add(id)
         await updateShippingTracking(env, id, {
           provider_registered: true,
           provider_carrier: Number.isFinite(Number(item.carrier)) ? Number(item.carrier) : null,
@@ -1255,10 +1257,18 @@ async function shippingSync(request: Request, env: Env): Promise<Response> {
         const number = trackingString(item.number, 120)
         const row = batch.find(entry => entry.tracking_number === number)
         if (row) {
-          rejectedNumbers.add(row.id)
-          await updateShippingTracking(env, row.id, {
-            tracking_error: trackingString(item.error?.message, 400) || '17TRACK konnte die Sendungsnummer nicht registrieren.',
-          })
+          if (Number(item.error?.code) === -18019901) {
+            acceptedIds.add(row.id)
+            await updateShippingTracking(env, row.id, {
+              provider_registered: true,
+              tracking_error: null,
+            })
+          } else {
+            rejectedNumbers.add(row.id)
+            await updateShippingTracking(env, row.id, {
+              tracking_error: trackingString(item.error?.message, 400) || '17TRACK konnte die Sendungsnummer nicht registrieren.',
+            })
+          }
         }
       }
     }
@@ -1266,9 +1276,7 @@ async function shippingSync(request: Request, env: Env): Promise<Response> {
     // By default, fetch only the first result after registering new numbers.
     // A deliberate manual refresh may re-query every active registered shipment.
     const requestBody = await request.clone().json().catch(() => ({})) as { forceRefresh?: boolean }
-    let registeredRows = desiredRows.filter(row =>
-      pending.some(item => item.id === row.id && !rejectedNumbers.has(row.id))
-    )
+    let registeredRows = desiredRows.filter(row => acceptedIds.has(row.id))
     if (requestBody.forceRefresh) {
       registeredRows = await supabaseAdminJson<ShippingTrackingRow[]>(
         env,
@@ -1338,7 +1346,7 @@ export async function verify17TrackWebhookSignature(rawBody: string, signature: 
 }
 
 async function shippingWebhook(request: Request, env: Env): Promise<Response> {
-  const secret = env.TRACKING_17TRACK_WEBHOOK_SECRET || ''
+  const secret = env.TRACKING_17TRACK_WEBHOOK_SECRET || env.TRACKING_17TRACK_API_TOKEN || ''
   if (!secret) return ebayJson({ error: '17TRACK Webhook-Sicherheitsschlüssel ist nicht eingerichtet.' }, 503)
   const rawBody = await request.text()
   if (rawBody.length > 500000) return ebayJson({ error: 'Webhook-Anfrage ist zu groß.' }, 413)

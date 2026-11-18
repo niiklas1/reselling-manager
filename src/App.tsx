@@ -1360,7 +1360,6 @@ function App() {
           <div className="profile-copy"><strong>{authSession?.user.user_metadata?.full_name || 'Mein Konto'}</strong><span>{authSession?.user.email}</span></div>
           <ChevronDown size={15} className="profile-chevron"/>
         </button>
-        <div className="sidebar-foot">DEIN RESELLING · DEIN ÜBERBLICK</div>
       </aside>
 
       {mobileNav && <button className="mobile-backdrop" aria-label="Menü schließen" onClick={() => setMobileNav(false)}/>}
@@ -1440,7 +1439,7 @@ function App() {
             </section>
             <section className="settings-group settings-account-group"><div className="settings-group-heading"><span className="settings-group-icon"><Settings size={17}/></span><div><h3>Konto</h3><p>Beende die Sitzung auf diesem Gerät. Deine Cloud-Daten bleiben erhalten.</p></div></div><div className="setting-row settings-signout-row"><div><strong>Abmelden</strong><span>Du kannst dich jederzeit wieder mit Google anmelden.</span></div><button className="button-ghost" onClick={() => void signOut()}><LogOut size={15}/> Abmelden</button></div></section>
           </section>}
-          <footer className="page-footer"><span className="footer-brand">Reselling Manager</span><span>·</span>Einfach den Überblick behalten.<small>Version {APP_VERSION}</small></footer>
+          <footer className="page-footer"><span className="footer-brand">Reselling Manager</span><span className="footer-separator" aria-hidden="true">·</span><span>Einfach den Überblick behalten</span><span className="footer-separator" aria-hidden="true">·</span><small>Version {APP_VERSION}</small></footer>
         </div>
       </main>
 

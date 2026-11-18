@@ -179,7 +179,7 @@ async function allowAiRequest(token: string): Promise<boolean> {
     }
     return true
   }
-  if (current.count >= 20) return false
+  if (current.count >= 50) return false
   current.count++
   return true
 }
@@ -208,8 +208,8 @@ async function matchShippingProducts(request: Request, env: Env): Promise<Respon
   }
   const candidates = Array.isArray(body.candidates) ? body.candidates : []
   const products = Array.isArray(body.products) ? body.products : []
-  if (!candidates.length || candidates.length > 20 || !products.length || products.length > 70) {
-    return jsonResponse({ error: 'Der KI-Abgleich unterstützt 1–20 E-Mails und 1–70 Produkte pro Durchlauf.' }, 400)
+  if (!candidates.length || candidates.length > 20 || !products.length || products.length > 150) {
+    return jsonResponse({ error: 'Der KI-Abgleich unterstützt 1–20 E-Mails und 1–150 Produkte pro Durchlauf.' }, 400)
   }
 
   const cleanCandidates: MatchCandidate[] = []

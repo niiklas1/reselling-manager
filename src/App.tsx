@@ -847,6 +847,21 @@ function App() {
           setCloudSyncError('')
           // Remove receipt objects only after their product changes are confirmed in Postgres.
           await Promise.all(obsoleteReceiptPaths.map(path => deleteProductReceipt(path).catch(() => undefined)))
+
+          // A different device may have changed unrelated rows while this batch was being
+          // written. Re-read the account after the write so this device catches up too.
+          const { data: latestRows, error: latestReadError } = await supabase.from('products')
+            .select('*')
+            .eq('user_id', userId)
+            .is('deleted_at', null)
+            .order('created_at', { ascending: false })
+          if (!latestReadError && loadedUserIdRef.current === userId) {
+            const latestProducts = ((latestRows || []) as CloudProductRow[]).map(cloudRowToProduct)
+            if (JSON.stringify(currentProductsRef.current) === JSON.stringify(snapshot)) {
+              syncedProductsRef.current = latestProducts
+              setProducts(latestProducts)
+            }
+          }
         } catch (error) {
           setCloudSyncState('error')
           setCloudSyncError(error instanceof Error ? error.message : 'Änderungen konnten nicht synchronisiert werden.')
@@ -901,6 +916,14 @@ function App() {
     const channel = supabase.channel('reselling-products-' + userId)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'products', filter: 'user_id=eq.' + userId }, () => { void refreshProducts() })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'user_settings', filter: 'user_id=eq.' + userId }, async () => {
+        // Never discard locally edited settings that have not yet reached Postgres.
+        const localSettingsBeforeRead = {
+          currency,
+          theme,
+          gmailClientId: gmailClientId.trim(),
+          gmailLearningHints,
+        }
+        if (JSON.stringify(localSettingsBeforeRead) !== settingsSnapshotRef.current) return
         const { data, error } = await supabase.from('user_settings').select('*').eq('user_id', userId).maybeSingle()
         if (!active || error || !data) return
         const hints = Array.isArray(data.gmail_learning_hints) ? data.gmail_learning_hints as GmailLearningHint[] : []

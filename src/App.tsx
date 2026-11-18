@@ -574,6 +574,12 @@ function App() {
   const syncedProductsRef = useRef<Product[]>([])
   const currentProductsRef = useRef<Product[]>([])
   const settingsSnapshotRef = useRef('')
+  const currentSettingsRef = useRef<{ currency: string; theme: 'light' | 'dark'; gmailClientId: string; gmailLearningHints: GmailLearningHint[] }>({
+    currency: 'EUR',
+    theme: 'dark',
+    gmailClientId: '',
+    gmailLearningHints: [],
+  })
   const syncQueueRef = useRef<Promise<void>>(Promise.resolve())
   const [search, setSearch] = useState('')
   const [filter, setFilter] = useState<'Alle' | Status>('Alle')
@@ -595,6 +601,7 @@ function App() {
 
   const userId = authSession?.user.id || null
   currentProductsRef.current = products
+  currentSettingsRef.current = { currency, theme, gmailClientId: gmailClientId.trim(), gmailLearningHints }
 
   useEffect(() => {
     void navigator.storage?.persist?.().catch(() => false)
@@ -917,13 +924,7 @@ function App() {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'products', filter: 'user_id=eq.' + userId }, () => { void refreshProducts() })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'user_settings', filter: 'user_id=eq.' + userId }, async () => {
         // Never discard locally edited settings that have not yet reached Postgres.
-        const localSettingsBeforeRead = {
-          currency,
-          theme,
-          gmailClientId: gmailClientId.trim(),
-          gmailLearningHints,
-        }
-        if (JSON.stringify(localSettingsBeforeRead) !== settingsSnapshotRef.current) return
+        if (JSON.stringify(currentSettingsRef.current) !== settingsSnapshotRef.current) return
         const { data, error } = await supabase.from('user_settings').select('*').eq('user_id', userId).maybeSingle()
         if (!active || error || !data) return
         const hints = Array.isArray(data.gmail_learning_hints) ? data.gmail_learning_hints as GmailLearningHint[] : []

@@ -28,7 +28,9 @@ export type MatchableProduct = {
   purchaseDate?: string
   saleDate?: string
   status?: string
+  incomingTrackingNumber?: string
   incomingTrackingUrl?: string
+  outgoingTrackingNumber?: string
   outgoingTrackingUrl?: string
 }
 

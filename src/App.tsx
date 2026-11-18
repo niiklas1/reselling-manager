@@ -10,7 +10,7 @@ import { readInvoiceSource } from './lib/invoiceSource'
 import type { InvoiceLineItem } from './lib/invoiceScanner'
 import { enrichInvoiceProductNames } from './lib/productLookup'
 import { googleImagesUrl, searchProductImages, type ProductImageResult } from './lib/productImages'
-import { rankGmailCandidatesWithAI, scanGmailForTracking, type GmailTrackingCandidate, type ShippingDirection } from './lib/gmailShipping'
+import { applyLearnedGmailMatch, createGmailLearningHint, mergeGmailLearningHint, rankGmailCandidatesWithAI, scanGmailForTracking, scoreProductMatch, type GmailLearningHint, type GmailTrackingCandidate, type ShippingDirection } from './lib/gmailShipping'
 
 type Status = 'Auf Lager' | 'Verkauft'
 const PRODUCT_CATEGORIES = ['Elektronik', 'TCG', 'Alternative'] as const
@@ -775,13 +775,15 @@ function App() {
       return false
     }
     const existingUrl = payload.direction === 'incoming' ? product.incomingTrackingUrl : product.outgoingTrackingUrl
-    if (existingUrl && existingUrl !== payload.trackingUrl) {
+    if (existingUrl && payload.trackingUrl && existingUrl !== payload.trackingUrl) {
       const directionLabel = payload.direction === 'incoming' ? 'eingehenden' : 'ausgehenden'
       if (!window.confirm('Für dieses Produkt ist bereits ein ' + directionLabel + ' Tracking-Link gespeichert. Soll dieser wirklich überschrieben werden?')) return false
+    } else if (existingUrl && !payload.trackingUrl && payload.trackingNumber) {
+      if (!window.confirm('Diese E-Mail enthält nur eine Sendungsnummer, aber keinen Tracking-Link. Der bereits gespeicherte Link bleibt erhalten; die Sendungsnummer wird aktualisiert. Fortfahren?')) return false
     }
     setProducts(current => current.map(item => item.id !== payload.productId ? item : payload.direction === 'incoming'
-      ? { ...item, incomingCarrier: payload.carrier, incomingTrackingNumber: payload.trackingNumber, incomingTrackingUrl: payload.trackingUrl }
-      : { ...item, outgoingCarrier: payload.carrier, outgoingTrackingNumber: payload.trackingNumber, outgoingTrackingUrl: payload.trackingUrl }))
+      ? { ...item, incomingCarrier: payload.carrier, incomingTrackingNumber: payload.trackingNumber, incomingTrackingUrl: payload.trackingUrl || item.incomingTrackingUrl || '' }
+      : { ...item, outgoingCarrier: payload.carrier, outgoingTrackingNumber: payload.trackingNumber, outgoingTrackingUrl: payload.trackingUrl || item.outgoingTrackingUrl || '' }))
     setDataError('')
     return true
   }
@@ -908,8 +910,12 @@ function ProductTable({ products, onEdit, onDelete, onSell, onReceipt }: { produ
         <div className="product-thumb">{product.imageUrl ? <img src={product.imageUrl} alt={product.name}/> : <Tag size={16}/>}</div>
         <div><strong>{product.name}</strong><span>{label ? label + ' · ' + (product.category || 'Ohne Kategorie') : (product.category || 'Ohne Kategorie')}</span>
           {product.receiptPath && <button className="receipt-inline" onClick={() => onReceipt(product)} title="Originalbeleg öffnen"><FileText size={12}/> Beleg öffnen</button>}
-          {product.incomingTrackingUrl && <a className="tracking-inline incoming" href={product.incomingTrackingUrl} target="_blank" rel="noreferrer"><ArrowDownToLine size={11}/> Eingang · {product.incomingCarrier || 'Sendung'}{product.incomingTrackingNumber ? ' · ' + product.incomingTrackingNumber : ''} <ExternalLink size={10}/></a>}
-          {product.outgoingTrackingUrl && <a className="tracking-inline outgoing" href={product.outgoingTrackingUrl} target="_blank" rel="noreferrer"><ArrowUpRight size={11}/> Ausgang · {product.outgoingCarrier || 'Sendung'}{product.outgoingTrackingNumber ? ' · ' + product.outgoingTrackingNumber : ''} <ExternalLink size={10}/></a>}
+          {product.incomingTrackingUrl
+            ? <a className="tracking-inline incoming" href={product.incomingTrackingUrl} target="_blank" rel="noreferrer"><ArrowDownToLine size={11}/> Eingang · {product.incomingCarrier || 'Sendung'}{product.incomingTrackingNumber ? ' · ' + product.incomingTrackingNumber : ''} <ExternalLink size={10}/></a>
+            : product.incomingTrackingNumber && <span className="tracking-inline incoming"><ArrowDownToLine size={11}/> Eingang · {product.incomingCarrier || 'Sendung'} · {product.incomingTrackingNumber} (ohne Link)</span>}
+          {product.outgoingTrackingUrl
+            ? <a className="tracking-inline outgoing" href={product.outgoingTrackingUrl} target="_blank" rel="noreferrer"><ArrowUpRight size={11}/> Ausgang · {product.outgoingCarrier || 'Sendung'}{product.outgoingTrackingNumber ? ' · ' + product.outgoingTrackingNumber : ''} <ExternalLink size={10}/></a>
+            : product.outgoingTrackingNumber && <span className="tracking-inline outgoing"><ArrowUpRight size={11}/> Ausgang · {product.outgoingCarrier || 'Sendung'} · {product.outgoingTrackingNumber} (ohne Link)</span>}
         </div>
       </div></td>
       <td>1</td>
@@ -1376,6 +1382,16 @@ function GmailShippingPanel({ products, onApply }: {
   const [accessToken, setAccessToken] = useState('')
   const [aiMatching, setAiMatching] = useState(false)
   const [candidates, setCandidates] = useState<GmailTrackingCandidate[]>([])
+  const [learningHints, setLearningHints] = useState<GmailLearningHint[]>(() => {
+    try {
+      const stored = JSON.parse(localStorage.getItem('reselling-gmail-learning-v1') || '[]')
+      return Array.isArray(stored) ? stored.filter((item: GmailLearningHint) =>
+        typeof item?.senderDomain === 'string' && typeof item?.productId === 'string' &&
+        (item.direction === 'incoming' || item.direction === 'outgoing') &&
+        Array.isArray(item.subjectTokens) && typeof item.approvedAt === 'string'
+      ).slice(0, 100) : []
+    } catch { return [] }
+  })
   const [days, setDays] = useState('180')
   const [ready, setReady] = useState(false)
   const [scanning, setScanning] = useState(false)
@@ -1386,6 +1402,10 @@ function GmailShippingPanel({ products, onApply }: {
   useEffect(() => {
     localStorage.setItem('reselling-gmail-client-id', clientId.trim())
   }, [clientId])
+
+  useEffect(() => {
+    try { localStorage.setItem('reselling-gmail-learning-v1', JSON.stringify(learningHints)) } catch { /* local learning is optional */ }
+  }, [learningHints])
 
   useEffect(() => {
     const existing = document.querySelector<HTMLScriptElement>('script[data-google-identity]')
@@ -1416,22 +1436,41 @@ function GmailShippingPanel({ products, onApply }: {
         setMessage('Versandmails erkannt. Die KI vergleicht jetzt Betreff, Textausschnitte und deine Produktliste …')
         try {
           const matches = []
+          const usedModels = new Set<string>()
           const aiProducts = [...products]
-            .sort((a, b) => (b.purchaseDate || b.saleDate || '').localeCompare(a.purchaseDate || a.saleDate || ''))
-            .slice(0, 70)
-          for (let index = 0; index < found.length; index += 20) {
-            matches.push(...await rankGmailCandidatesWithAI(value, found.slice(index, index + 20), aiProducts))
+            .map(product => ({
+              product,
+              relevance: Math.max(0, ...found.map(candidate => scoreProductMatch(product.name, candidate.matchText))),
+              recency: product.purchaseDate || product.saleDate || '',
+            }))
+            .sort((a, b) => b.relevance - a.relevance || b.recency.localeCompare(a.recency))
+            .slice(0, 150)
+            .map(item => item.product)
+          // Larger safe batches avoid re-embedding the same catalogue for too
+          // many small calls while staying within the Worker's request limit.
+          for (let index = 0; index < found.length; index += 40) {
+            const result = await rankGmailCandidatesWithAI(value, found.slice(index, index + 40), aiProducts)
+            matches.push(...result.matches)
+            result.modelsUsed.forEach(model => usedModels.add(model))
           }
           const byCandidate = new Map(matches.map(match => [match.candidateId, match]))
           reviewed = found.map(candidate => {
             const match = byCandidate.get(candidate.id)
             return match
-              ? { ...candidate, suggestedProductId: match.productId, matchConfidence: match.score }
+              ? {
+                  ...candidate,
+                  suggestedProductId: match.productId,
+                  matchConfidence: match.score,
+                  matchReason: match.reason,
+                  matchSource: 'KI-Ensemble',
+                }
               : candidate
           })
-          aiSummary = ' KI-Abgleich mit BGE-M3 abgeschlossen.'
+          aiSummary = usedModels.size
+            ? ' KI-Prüfung: ' + [...usedModels].join(' + ') + '.'
+            : ' KI-Abgleich ohne verfügbare Modell-Antwort.'
           if (products.length > aiProducts.length) {
-            aiSummary += ' Berücksichtigt wurden die 70 zuletzt bearbeiteten Produkte.'
+            aiSummary += ' Berücksichtigt wurden die 150 zuletzt bearbeiteten Produkte.'
           }
         } catch (aiError) {
           const detail = aiError instanceof Error ? aiError.message : 'Unbekannter KI-Fehler.'
@@ -1439,6 +1478,9 @@ function GmailShippingPanel({ products, onApply }: {
           aiSummary = ' Die KI war nicht erreichbar; angezeigt werden die lokalen Produktvorschläge.'
         }
       }
+      reviewed = reviewed.map(candidate =>
+        applyLearnedGmailMatch(candidate, products, learningHints)
+      )
       setCandidates(reviewed)
       setMessage(reviewed.length
         ? reviewed.length + ' eindeutige Versand-/Trackingtreffer gefunden.' + aiSummary + ' Prüfe jede Zuordnung vor dem Übernehmen.'
@@ -1474,7 +1516,7 @@ function GmailShippingPanel({ products, onApply }: {
       },
       error_callback: authError => setError(authError.message || 'Google-Anmeldung wurde abgebrochen.')
     })
-  }, [clientId, ready, products, days, aiMatching])
+  }, [clientId, ready, products, days, aiMatching, learningHints])
 
   function connectAndScan() {
     setError('')
@@ -1503,8 +1545,12 @@ function GmailShippingPanel({ products, onApply }: {
       trackingUrl: candidate.trackingUrl,
     })
     if (!applied) return
+    const learned = createGmailLearningHint(candidate, candidate.suggestedProductId, products)
+    setLearningHints(current => mergeGmailLearningHint(current, learned))
     setCandidates(current => current.filter(item => item.id !== candidate.id))
-    setMessage('Versanddaten wurden dem Produkt zugeordnet.')
+    setMessage(learned
+      ? 'Versanddaten übernommen. Die bestätigte Absender-/Betreffkombination wurde lokal für ähnliche künftige Mails gemerkt.'
+      : 'Versanddaten wurden dem Produkt zugeordnet. Für eine sichere Lernregel enthielt der Betreff zu wenige eindeutige Produktmerkmale.')
   }
 
   return <section className="gmail-panel">
@@ -1514,8 +1560,9 @@ function GmailShippingPanel({ products, onApply }: {
       <small>Einmalig: Gmail API in Google Cloud aktivieren, OAuth-Einwilligungsbildschirm einrichten, OAuth-Client vom Typ „Webanwendung“ erstellen und diese oben angezeigte Website-Adresse als autorisierten JavaScript-Ursprung eintragen. Danach nur die Client-ID hier einfügen. Kein Client Secret nötig; Zugriff nur lesend.</small>
       <label className="gmail-ai-toggle">
         <input type="checkbox" checked={aiMatching} onChange={event => setAiMatching(event.target.checked)}/>
-        <span><strong>KI-Produktabgleich aktivieren (BGE-M3)</strong><small>Optional: Minimierte Betreff-/Textausschnitte, Absender-Domain und Produktnamen werden für den semantischen Abgleich einmalig an Cloudflare Workers AI übertragen. Keine automatische Speicherung der E-Mail-Inhalte. Die Vorschläge bleiben prüfpflichtig.</small></span>
+        <span><strong>KI-Produktabgleich aktivieren (3-Modelle-Ensemble)</strong><small>Optional: BGE-M3 + Google EmbeddingGemma 2 suchen semantisch passende Produkte; BGE-Reranker prüft die besten Kandidaten direkt gegeneinander. Nur minimierte Textausschnitte, Absender-Domain und Produktdaten gehen an Cloudflare Workers AI. Deine bestätigten Betreff-/Absender-Zuordnungen lernt die App zusätzlich lokal. Die Vorschläge bleiben prüfpflichtig.</small></span>
       </label>
+      <small className="gmail-learning-info">{learningHints.length} lokal gemerkte Zuordnungsregel(n) aus von dir bestätigten Versandmails. Gespeichert werden nur Absender-Domain und markante Betreffwörter.</small>
       <div className="gmail-setup-links"><a href="https://console.cloud.google.com/apis/library/gmail.googleapis.com" target="_blank" rel="noreferrer">Gmail API aktivieren <ExternalLink size={11}/></a><a href="https://console.cloud.google.com/auth/clients" target="_blank" rel="noreferrer">OAuth Client-ID erstellen <ExternalLink size={11}/></a><a href="https://developers.google.com/identity/oauth2/web/guides/use-token-model" target="_blank" rel="noreferrer">Google-Anleitung <ExternalLink size={11}/></a></div>
       <div className="gmail-origin"><span>Autorisierte JavaScript-Quelle:</span><code>{window.location.origin}</code><button type="button" onClick={() => void navigator.clipboard?.writeText(window.location.origin)}>Kopieren</button></div>
     </div>
@@ -1526,13 +1573,13 @@ function GmailShippingPanel({ products, onApply }: {
       {candidates.map(candidate => <article className="gmail-candidate" key={candidate.id}>
         <div className="gmail-candidate-top"><div><strong>{candidate.subject}</strong><small>{candidate.sender} · {candidate.date ? new Date(candidate.date).toLocaleDateString('de-DE') : 'Datum unbekannt'} · {candidate.carrier}</small></div><span className={candidate.direction === 'incoming' ? 'gmail-direction incoming' : 'gmail-direction outgoing'}>{candidate.direction === 'incoming' ? 'Eingang' : 'Ausgang'}</span></div>
         {candidate.snippet && <p>{candidate.snippet}</p>}
-        <a className="gmail-track-link" href={candidate.trackingUrl} target="_blank" rel="noreferrer">{candidate.trackingUrl} <ExternalLink size={11}/></a>
+        {candidate.trackingUrl ? <a className="gmail-track-link" href={candidate.trackingUrl} target="_blank" rel="noreferrer">{candidate.trackingUrl} <ExternalLink size={11}/></a> : <small>Kein direkter Tracking-Link in der E-Mail – Sendungsnummer kann trotzdem übernommen werden.</small>}
         {candidate.trackingNumber && <small>Sendungsnummer: {candidate.trackingNumber}</small>}
-        <small>{candidate.suggestedProductId ? 'Automatischer Produktvorschlag · ' + Math.round(candidate.matchConfidence * 100) + '% Übereinstimmung (bitte prüfen)' : 'Keine eindeutige Produktzuordnung – bitte manuell auswählen'}</small>
-        <div className="gmail-candidate-actions"><label className="field"><span>Produkt zuordnen</span><select value={candidate.suggestedProductId} onChange={event => setCandidates(current => current.map(item => item.id === candidate.id ? { ...item, suggestedProductId: event.target.value } : item))}><option value="">Produkt auswählen …</option>{products.map(product => <option key={product.id} value={product.id}>{product.name} · {product.status}</option>)}</select></label><label className="field"><span>Versandrichtung</span><select value={candidate.direction} onChange={event => setCandidates(current => current.map(item => item.id === candidate.id ? { ...item, direction: event.target.value as ShippingDirection } : item))}><option value="incoming">Eingehend · Einkauf</option><option value="outgoing">Ausgehend · Verkauf</option></select></label><button type="button" className="button-primary" onClick={() => applyCandidate(candidate)} disabled={!candidate.suggestedProductId}>Übernehmen</button><button type="button" className="button-ghost" onClick={() => setCandidates(current => current.filter(item => item.id !== candidate.id))}>Verwerfen</button></div>
+        <small>{candidate.matchSource === 'KI-Ensemble' ? 'KI-Match-Score: ' + candidate.matchConfidence.toFixed(2) + '/1.00 · ' + (candidate.matchReason || 'Bitte prüfen') : candidate.matchSource === 'Eigene bestätigte Zuordnung' ? (candidate.matchReason || 'Eigene bestätigte Zuordnung') : candidate.suggestedProductId ? (candidate.matchSource === 'Manuell' ? 'Manuell ausgewählt – bitte vor dem Übernehmen prüfen.' : 'Regelbasierter Vorschlag · ' + Math.round(candidate.matchConfidence * 100) + '/100 (bitte prüfen)') : 'Keine eindeutige Produktzuordnung – bitte manuell auswählen'}</small>
+        <div className="gmail-candidate-actions"><label className="field"><span>Produkt zuordnen</span><select value={candidate.suggestedProductId} onChange={event => setCandidates(current => current.map(item => item.id === candidate.id ? { ...item, suggestedProductId: event.target.value, matchSource: event.target.value ? 'Manuell' : undefined, matchReason: undefined } : item))}><option value="">Produkt auswählen …</option>{products.map(product => <option key={product.id} value={product.id}>{product.name} · {product.status}</option>)}</select></label><label className="field"><span>Versandrichtung</span><select value={candidate.direction} onChange={event => setCandidates(current => current.map(item => item.id === candidate.id ? { ...item, direction: event.target.value as ShippingDirection } : item))}><option value="incoming">Eingehend · Einkauf</option><option value="outgoing">Ausgehend · Verkauf</option></select></label><button type="button" className="button-primary" onClick={() => applyCandidate(candidate)} disabled={!candidate.suggestedProductId}>Übernehmen</button><button type="button" className="button-ghost" onClick={() => setCandidates(current => current.filter(item => item.id !== candidate.id))}>Verwerfen</button></div>
       </article>)}
     </div>}
-    <small className="gmail-privacy">Gmail wird nur lesend durchsucht. Ohne aktivierte KI bleibt die gesamte E-Mail-Auswertung im Browser. Bei aktivierter KI werden ausschließlich minimierte Textausschnitte und Produktdaten an Cloudflare Workers AI gesendet; der kurzlebige Gmail-Token wird dort nur zur Prüfung des Zugriffs verwendet und nicht gespeichert. Treffer werden nie ohne deine Bestätigung einem Produkt zugeordnet.</small>
+    <small className="gmail-privacy">Gmail wird nur lesend durchsucht. Ohne aktivierte KI bleibt die E-Mail-Auswertung im Browser; bestätigte Lernregeln bleiben lokal auf diesem Gerät. Bei aktivierter KI werden minimierte Textausschnitte und Produktdaten an Cloudflare Workers AI gesendet und dort mit bis zu drei Modellen abgeglichen. Der kurzlebige Gmail-Token wird nur zur Zugriffsprüfung verwendet und nicht gespeichert. Treffer werden nie ohne deine Bestätigung einem Produkt zugeordnet.</small>
   </section>
 }
 

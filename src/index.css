@@ -426,9 +426,11 @@ body{background:#f1eff8}
 .gmail-ai-toggle>span{display:grid;gap:4px}
 .gmail-ai-toggle strong{font-size:9px;color:#51456f}
 .gmail-ai-toggle small{font-size:8px;line-height:1.5;color:#77728d}
+.gmail-learning-info{font-size:8px;color:#8991a1;line-height:1.45}
 :root[data-theme="dark"] .gmail-ai-toggle{background:#211e39;border-color:#493e67}
 :root[data-theme="dark"] .gmail-ai-toggle strong{color:#e8e5f5}
 :root[data-theme="dark"] .gmail-ai-toggle small{color:#a1a8c0}
+:root[data-theme="dark"] .gmail-learning-info{color:#a1a8c0}
 :root[data-theme="dark"] .gmail-panel{border-color:#2a2a44}
 :root[data-theme="dark"] .gmail-panel-heading strong,:root[data-theme="dark"] .gmail-candidates-heading strong,:root[data-theme="dark"] .gmail-candidate-top strong{color:#e8e5f5}
 :root[data-theme="dark"] .gmail-panel-heading p,:root[data-theme="dark"] .gmail-setup>small,:root[data-theme="dark"] .gmail-privacy,:root[data-theme="dark"] .gmail-origin span,:root[data-theme="dark"] .gmail-candidate-top small,:root[data-theme="dark"] .gmail-candidate>small,:root[data-theme="dark"] .gmail-candidates-heading span{color:#a1a8c0}

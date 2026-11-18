@@ -16,6 +16,8 @@ export type GmailTrackingCandidate = {
   matchText: string
   suggestedProductId: string
   matchConfidence: number
+  matchReason?: string
+  matchSource?: string
 }
 
 export type MatchableProduct = {
@@ -26,7 +28,9 @@ export type MatchableProduct = {
   purchaseDate?: string
   saleDate?: string
   status?: string
+  incomingTrackingNumber?: string
   incomingTrackingUrl?: string
+  outgoingTrackingNumber?: string
   outgoingTrackingUrl?: string
 }
 
@@ -36,6 +40,17 @@ export type AiProductMatch = {
   score: number
   semanticScore: number
   lexicalScore: number
+  rerankerScore?: number
+  modelAgreement?: boolean
+  reason?: string
+}
+
+export type GmailLearningHint = {
+  senderDomain: string
+  productId: string
+  direction: ShippingDirection
+  subjectTokens: string[]
+  approvedAt: string
 }
 
 type GmailMessageRef = { id: string; threadId?: string }
@@ -55,10 +70,10 @@ type GmailMessage = {
 }
 
 const GMAIL_API = 'https://gmail.googleapis.com/gmail/v1/users/me'
-const SHIPPING_INTENT = /\b(?:shipping confirmation|shipment confirmation|shipment update|your order has shipped|your order was shipped|your package has shipped|your parcel has shipped|we(?:'|’)ve shipped|we have shipped|shipped your order|is on its way|on its way to you|out for delivery|in transit|left our warehouse|dispatch confirmation|dispatched your order|tracking number|tracking details|track your (?:order|package|parcel)|track package|sendungsverfolgung|sendungsnummer|versandbest(?:ä|ae)tigung|wurde versendet|wurde verschickt|ist unterwegs|auf dem weg zu dir|paket wurde versendet|paket wurde verschickt|ihre bestellung wurde versendet|ihre sendung wurde|in zustellung|zustellversuch|abholbereit)\b/i
+const SHIPPING_INTENT = /\b(?:shipping confirmation|shipment confirmation|shipment update|your order has shipped|your order was shipped|your package has shipped|your parcel has shipped|we(?:'|’)ve shipped|we have shipped|shipped your order|is on its way|on its way to you|out for delivery|in transit|left our warehouse|left the warehouse|dispatch confirmation|dispatched your order|has been dispatched|handed to carrier|handed to courier|carrier picked up|carrier has your package|delivery attempt|arriving today|ready for pickup|available for pickup|Versandmitteilung|Paket wurde abgeholt|versandfertig|tracking number|tracking details|track your (?:order|package|parcel)|track package|sendungsverfolgung|sendungsnummer|versandbest(?:ä|ae)tigung|wurde versendet|wurde verschickt|ist unterwegs|auf dem weg zu dir|paket wurde versendet|paket wurde verschickt|ihre bestellung wurde versendet|ihre sendung wurde|in zustellung|zustellversuch|abholbereit)\b/i
 const TRACKING_LABEL = /\b(?:track(?:ing)? (?:your )?(?:order|package|parcel|shipment)|sendungsverfolgung|tracking (?:link|number|details|information)|view tracking|track shipment|track package|track parcel)\b/i
 const TRACKING_ENDPOINT = /(?:^|[\/_.-])(?:track(?:ing)?|shiptrack|shipment-tracking|parcel-tracking|package-tracking|sendungsverfolgung|progress-tracker)(?:$|[\/_.?&=-])/i
-const TRACKING_ID_PARAMS = new Set(['tracking', 'trackingnumber', 'tracking_number', 'trackno', 'track_no', 'tracknum', 'track_num', 'shipmentid', 'shipment_id', 'parcelid', 'parcel_id', 'packageid', 'package_id', 'code'])
+const TRACKING_ID_PARAMS = new Set(['tracking', 'trackingnumber', 'tracking_number', 'trackingid', 'tracking_id', 'trackingcode', 'tracking_code', 'trackno', 'track_no', 'tracknum', 'track_num', 'trackid', 'track_id', 'shipmentid', 'shipment_id', 'shipmentnumber', 'shipment_number', 'shipmentno', 'shipment_no', 'parcelid', 'parcel_id', 'parcelnumber', 'parcel_number', 'packageid', 'package_id', 'consignment', 'consignmentnumber', 'consignment_number', 'waybill', 'waybillnumber', 'awb', 'awbnumber', 'barcode', 'code'])
 const TRACKING_TERMS = /tracking|track|sendungsverfolg|sendungsnummer|paketnummer|shipment|parcel/i
 
 export function isLikelyShippingEmail(subject: string, bodyText: string): boolean {
@@ -76,6 +91,27 @@ const CARRIERS: Array<{ name: string; domains: string[] }> = [
   { name: 'InPost', domains: ['inpost.pl', 'inpost.eu', 'inpost.co.uk'] },
   { name: 'PostNL', domains: ['postnl.nl', 'postnl.be'] },
   { name: 'Chronopost', domains: ['chronopost.fr'] },
+  { name: 'Royal Mail', domains: ['royalmail.com'] },
+  { name: 'USPS', domains: ['usps.com'] },
+  { name: 'La Poste', domains: ['laposte.fr'] },
+  { name: 'Canada Post', domains: ['canadapost.ca', 'canadapost-postescanada.ca'] },
+  { name: 'Australia Post', domains: ['auspost.com.au'] },
+  { name: 'Swiss Post', domains: ['post.ch'] },
+  { name: 'Österreichische Post', domains: ['post.at'] },
+  { name: 'Correos', domains: ['correos.es'] },
+  { name: 'Poste Italiane', domains: ['poste.it'] },
+  { name: 'Mondial Relay', domains: ['mondialrelay.fr', 'mondialrelay.be', 'mondialrelay.nl'] },
+  { name: 'Yodel', domains: ['yodel.co.uk'] },
+  { name: 'Cainiao', domains: ['global.cainiao.com', 'cainiao.com'] },
+  { name: 'YunExpress', domains: ['yunexpress.com'] },
+  { name: '4PX', domains: ['4px.com'] },
+  { name: 'Asendia', domains: ['asendia.com'] },
+  { name: 'Aramex', domains: ['aramex.com'] },
+  { name: 'SF Express', domains: ['sf-express.com'] },
+  { name: 'PostNord', domains: ['postnord.com', 'postnord.se', 'postnord.dk'] },
+  { name: 'An Post', domains: ['anpost.com'] },
+  { name: 'Parcelforce', domains: ['parcelforce.com'] },
+  { name: 'bpost', domains: ['bpost.be'] },
 ]
 
 function normalizeText(value: string): string {
@@ -99,7 +135,8 @@ export function identifyCarrier(urlOrHost: string): string {
 }
 
 function hasTrackingEndpoint(url: URL): boolean {
-  const path = decodeURIComponent(url.pathname)
+  let path = url.pathname
+  try { path = decodeURIComponent(url.pathname) } catch { /* retain the encoded pathname */ }
   if (TRACKING_ENDPOINT.test(path)) return true
   for (const [key, value] of url.searchParams.entries()) {
     if (TRACKING_ID_PARAMS.has(key.toLowerCase()) && value.trim().length >= 5) return true
@@ -110,7 +147,7 @@ function hasTrackingEndpoint(url: URL): boolean {
 function resemblesCarrierSpoof(hostname: string): boolean {
   if (identifyCarrier(hostname)) return false
   const labels = hostname.toLowerCase().split('.')
-  const brands = ['dhl', 'dpd', 'hermes', 'evri', 'gls', 'ups', 'fedex', 'inpost', 'postnl', 'chronopost']
+  const brands = ['dhl', 'dpd', 'hermes', 'evri', 'gls', 'ups', 'fedex', 'inpost', 'postnl', 'chronopost', 'royalmail', 'usps', 'laposte', 'canadapost', 'auspost', 'correos', 'poste', 'mondialrelay', 'yodel', 'cainiao', 'yunexpress', '4px', 'asendia', 'aramex', 'sfexpress', 'postnord', 'anpost', 'parcelforce', 'bpost']
   return labels.some(label => brands.some(brand => label === brand || label.startsWith(brand + '-') || label.endsWith('-' + brand)))
 }
 
@@ -129,12 +166,31 @@ export function isSafeTrackingUrl(rawUrl: string): boolean {
   }
 }
 
+function resemblesUnsafeTrackingHost(rawUrl: string): boolean {
+  try {
+    const url = new URL(rawUrl)
+    const host = url.hostname.toLowerCase()
+    if (url.protocol !== 'https:' || url.username || url.password || !host || host === 'localhost' || host.endsWith('.local') || host.startsWith('[')) return true
+    if (/^(?:127\.|10\.|192\.168\.|172\.(?:1[6-9]|2\d|3[01])\.)/.test(host) || /^\d{1,3}(?:\.\d{1,3}){3}$/.test(host)) return true
+    return resemblesCarrierSpoof(host)
+  } catch {
+    return true
+  }
+}
+
 function unwrapTrackingUrl(rawUrl: string): string {
   try {
     const url = new URL(rawUrl)
-    if (/^(?:www\.)?google\.(?:com|de|co\.uk)$/i.test(url.hostname)) {
-      const nested = url.searchParams.get('url') || url.searchParams.get('q') || url.searchParams.get('u')
-      if (nested && /^https:\/\//i.test(nested)) return nested
+    const wrapperHosts = /^(?:www\.)?google\.(?:com|de|co\.uk)$/i
+    const redirectKeys = ['url', 'u', 'redirect', 'redirect_url', 'target', 'destination', 'dest', 'to', 'link', 'continue']
+    const nested = wrapperHosts.test(url.hostname)
+      ? url.searchParams.get('url') || url.searchParams.get('q') || url.searchParams.get('u')
+      : redirectKeys.map(key => url.searchParams.get(key)).find(value => value && /^https:\/\//i.test(value)) || ''
+    if (nested && /^https:\/\//i.test(nested)) {
+      try {
+        const nestedUrl = new URL(nested)
+        if (isSafeTrackingUrl(nestedUrl.toString())) return nestedUrl.toString()
+      } catch { /* keep the original HTTPS redirect if parsing fails */ }
     }
     return url.toString()
   } catch {
@@ -216,19 +272,18 @@ function htmlToText(html: string): string {
   return document.body?.textContent || ''
 }
 
-function extractLinks(html: string, text: string): Array<{ url: string; label: string }> {
-  const links: Array<{ url: string; label: string }> = []
+function extractLinks(html: string, text: string): Array<{ url: string; label: string; context: string }> {
+  const links: Array<{ url: string; label: string; context: string }> = []
   if (html && typeof DOMParser !== 'undefined') {
     const document = new DOMParser().parseFromString(html, 'text/html')
     document.querySelectorAll('a[href]').forEach(anchor => {
-      links.push({
-        url: (anchor.getAttribute('href') || '').trim(),
-        label: (anchor.textContent || '').trim(),
-      })
+      const label = (anchor.textContent || '').trim()
+      const context = (anchor.parentElement?.textContent || '').trim().slice(0, 450)
+      links.push({ url: (anchor.getAttribute('href') || '').trim(), label, context })
     })
   }
   for (const match of text.matchAll(/https?:\/\/[^\s<>"']+/gi)) {
-    links.push({ url: match[0].replace(/[),.;!?]+$/g, ''), label: '' })
+    links.push({ url: match[0].replace(/[),.;!?]+$/g, ''), label: '', context: '' })
   }
   return links
 }
@@ -258,8 +313,25 @@ function trackingNumberFromUrl(rawUrl: string): string {
   }
 }
 
+export function decodeMimeWords(value: string): string {
+  return value.replace(/=\?([^?]+)\?([bq])\?([^?]*)\?=/gi, (whole, charset: string, encoding: string, payload: string) => {
+    try {
+      if (encoding.toLowerCase() === 'b') {
+        const binary = atob(payload)
+        const bytes = Uint8Array.from(binary, char => char.charCodeAt(0))
+        return new TextDecoder(charset || 'utf-8').decode(bytes)
+      }
+      const decoded = payload.replace(/_/g, ' ').replace(/=([0-9a-f]{2})/gi, '%$1')
+      return decodeURIComponent(decoded)
+    } catch {
+      return whole
+    }
+  })
+}
+
 function headerValue(headers: GmailHeader[] | undefined, name: string): string {
-  return headers?.find(header => header.name?.toLowerCase() === name.toLowerCase())?.value || ''
+  const value = headers?.find(header => header.name?.toLowerCase() === name.toLowerCase())?.value || ''
+  return decodeMimeWords(value)
 }
 
 function senderDomain(sender: string): string {
@@ -278,7 +350,7 @@ function canonicalTrackingUrl(rawUrl: string): string {
     const url = new URL(rawUrl)
     url.hash = ''
     for (const key of [...url.searchParams.keys()]) {
-      if (/^(utm_|gclid$|fbclid$|mc_[ce]id$|ref$)/i.test(key)) url.searchParams.delete(key)
+      if (/^(utm_|gclid$|fbclid$|mc_[ce]id$)/i.test(key)) url.searchParams.delete(key)
     }
     url.hostname = url.hostname.toLowerCase()
     url.pathname = url.pathname.replace(/\/+$/, '')
@@ -287,6 +359,12 @@ function canonicalTrackingUrl(rawUrl: string): string {
   } catch {
     return rawUrl
   }
+}
+
+export function trackingCandidateDedupKey(candidate: Pick<GmailTrackingCandidate, 'trackingNumber' | 'trackingUrl' | 'messageId'>): string {
+  if (candidate.trackingNumber) return 'number:' + candidate.trackingNumber.toUpperCase().replace(/[^A-Z0-9]/g, '')
+  if (candidate.trackingUrl) return 'url:' + canonicalTrackingUrl(candidate.trackingUrl)
+  return 'message:' + candidate.messageId
 }
 
 function minimizeForAi(value: string): string {
@@ -323,19 +401,37 @@ function parseMessage(message: GmailMessage, products: MatchableProduct[]): Gmai
     const url = unwrapTrackingUrl(link.url)
     let parsed: URL | null = null
     try { parsed = new URL(url) } catch { /* ignored */ }
+    const linkText = link.label + ' ' + link.context
+    const labelledTrackingAction = TRACKING_LABEL.test(linkText)
+    const carrier = parsed ? identifyCarrier(parsed.hostname) : ''
+    const urlTrackingNumber = trackingNumberFromUrl(url)
+    const endpoint = Boolean(parsed && hasTrackingEndpoint(parsed))
+    const pathIsUseful = Boolean(parsed && parsed.pathname !== '/' && parsed.pathname.length > 2)
+    // Retailers sometimes place tracking behind an order-status button rather
+    // than a URL containing the word "tracking". Admit this only in a clearly
+    // identified shipping email and only for a specific non-homepage path.
+    const shipmentContextLink = hasShippingIntent && labelledTrackingAction && pathIsUseful
+    const carrierWithNumber = Boolean(carrier && (urlTrackingNumber || trackingNumber) && pathIsUseful)
+    const score = (labelledTrackingAction ? 6 : 0) +
+      (endpoint ? 5 : 0) +
+      (carrier ? 3 : 0) +
+      (shipmentContextLink ? 2 : 0) +
+      (carrierWithNumber ? 2 : 0)
     return {
       url,
       label: link.label,
-      carrier: parsed ? identifyCarrier(parsed.hostname) : '',
-      trackingNumber: trackingNumberFromUrl(url),
-      score: (TRACKING_LABEL.test(link.label) ? 6 : 0) +
-        (parsed && hasTrackingEndpoint(parsed) ? 5 : 0) +
-        (parsed && identifyCarrier(parsed.hostname) ? 3 : 0),
+      context: link.context,
+      carrier,
+      trackingNumber: urlTrackingNumber,
+      score,
+      isCandidate: endpoint || labelledTrackingAction || carrierWithNumber,
     }
-  }).filter(link => isSafeTrackingUrl(link.url) && link.score >= 5 &&
-    (Boolean(link.trackingNumber || trackingNumber) || TRACKING_LABEL.test(link.label)))
+  }).filter(link =>
+    (isSafeTrackingUrl(link.url) || (hasShippingIntent && link.isCandidate && !resemblesUnsafeTrackingHost(link.url))) &&
+    link.score >= 5 &&
+    (Boolean(link.trackingNumber || trackingNumber) || TRACKING_LABEL.test(link.label + ' ' + link.context))
+  )
 
-  if (!validLinks.length) return []
   const isBulk = Boolean(headerValue(headers, 'list-unsubscribe') || headerValue(headers, 'list-id')) ||
     /^(?:bulk|list)/i.test(headerValue(headers, 'precedence'))
   const isPromotion = labels.includes('CATEGORY_PROMOTIONS')
@@ -344,16 +440,25 @@ function parseMessage(message: GmailMessage, products: MatchableProduct[]): Gmai
   const uniqueLinks = [...new Map(validLinks
     .sort((a, b) => b.score - a.score)
     .map(link => [canonicalTrackingUrl(link.url), link])).values()].slice(0, 3)
+  // A single shipment email can contain several order/account buttons. Keep
+  // one best tracking destination unless multiple links each carry their own
+  // distinct tracking number (multi-parcel order).
+  const separatelyNumberedLinks = uniqueLinks.filter(link => link.trackingNumber)
+  const linksToUse = separatelyNumberedLinks.length > 1 ? separatelyNumberedLinks : uniqueLinks.slice(0, 1)
   const date = dateFromMessage(message)
   const direction: ShippingDirection = labels.includes('SENT') ? 'outgoing' : 'incoming'
   const matchText = [subject, searchableText, domain].join('\n').slice(0, 5000)
   const match = suggestProductMatch(products, searchableText)
+  const inferredCarrier = identifyCarrier(domain) || CARRIERS.find(carrier =>
+    normalizeText(searchableText + ' ' + sender).includes(normalizeText(carrier.name))
+  )?.name || 'Versanddienst'
 
-  return uniqueLinks.map((link, index) => {
-    const resolvedTrackingNumber = link.trackingNumber || trackingNumber
-    const trackingUrl = link.url
-    return {
-      id: (message.id || 'mail') + ':' + index,
+  if (!uniqueLinks.length) {
+    // Preserve explicitly labelled parcel numbers even when the carrier email
+    // omitted a direct tracking URL. Never invent a tracking destination.
+    if (!trackingNumber) return []
+    return [{
+      id: (message.id || 'mail') + ':number',
       messageId: message.id || '',
       threadId: message.threadId || '',
       subject: subject || '(ohne Betreff)',
@@ -361,27 +466,60 @@ function parseMessage(message: GmailMessage, products: MatchableProduct[]): Gmai
       senderDomain: domain,
       date,
       direction,
-      carrier: link.carrier || 'Versanddienst',
-      trackingNumber: resolvedTrackingNumber,
-      trackingUrl,
+      carrier: inferredCarrier,
+      trackingNumber,
+      trackingUrl: '',
       snippet: (message.snippet || '').slice(0, 220),
       matchText: minimizeForAi(matchText),
       suggestedProductId: match.productId,
       matchConfidence: match.confidence,
-    }
-  })
+    }]
+  }
+
+  return linksToUse.map((link, index) => ({
+    id: (message.id || 'mail') + ':' + index,
+    messageId: message.id || '',
+    threadId: message.threadId || '',
+    subject: subject || '(ohne Betreff)',
+    sender,
+    senderDomain: domain,
+    date,
+    direction,
+    carrier: link.carrier || inferredCarrier,
+    trackingNumber: link.trackingNumber || trackingNumber,
+    trackingUrl: link.url,
+    snippet: (message.snippet || '').slice(0, 220),
+    matchText: minimizeForAi(matchText),
+    suggestedProductId: match.productId,
+    matchConfidence: match.confidence,
+  }))
 }
 
 async function getJson<T>(url: string, token: string): Promise<T> {
-  const response = await fetch(url, {
-    headers: { Authorization: 'Bearer ' + token, Accept: 'application/json' },
-  })
-  if (!response.ok) {
+  let lastError: Error | null = null
+  for (let attempt = 0; attempt < 3; attempt++) {
+    let response: Response
+    try {
+      response = await fetch(url, {
+        headers: { Authorization: 'Bearer ' + token, Accept: 'application/json' },
+      })
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error('Netzwerkfehler beim Gmail-Zugriff.')
+      if (attempt < 2) {
+        await new Promise(resolve => setTimeout(resolve, 250 * (attempt + 1)))
+        continue
+      }
+      throw lastError
+    }
+    if (response.ok) return response.json() as Promise<T>
     if (response.status === 401) throw new Error('Die Gmail-Berechtigung ist abgelaufen. Verbinde Gmail erneut.')
     if (response.status === 403) throw new Error('Google hat den Gmail-Zugriff abgelehnt. Prüfe, ob die Gmail API aktiviert ist und die Leseberechtigung erteilt wurde.')
-    throw new Error('Gmail konnte die Nachricht nicht abrufen (HTTP ' + response.status + ').')
+    if (![429, 500, 502, 503, 504].includes(response.status) || attempt === 2) {
+      throw new Error('Gmail konnte die Nachricht nicht abrufen (HTTP ' + response.status + ').')
+    }
+    await new Promise(resolve => setTimeout(resolve, 250 * (attempt + 1)))
   }
-  return response.json() as Promise<T>
+  throw lastError || new Error('Gmail konnte die Nachricht nicht abrufen.')
 }
 
 /**
@@ -397,29 +535,48 @@ export async function scanGmailForTracking(
   if (!accessToken) throw new Error('Es fehlt eine gültige Gmail-Freigabe.')
   const safeDays = Math.max(1, Math.min(365, Math.floor(days)))
   const safeMax = Math.max(1, Math.min(300, Math.floor(maxResults)))
-  const query = 'newer_than:' + safeDays + 'd { "has shipped" shipped dispatch tracking "track your order" "track your package" shipment parcel "shipping confirmation" "on its way" versendet verschickt versandbestätigung sendungsnummer sendungsverfolgung unterwegs } -category:social -in:spam -in:trash'
-  const refs: GmailMessageRef[] = []
-  let pageToken = ''
-  do {
-    const listUrl = new URL(GMAIL_API + '/messages')
-    listUrl.searchParams.set('q', query)
-    listUrl.searchParams.set('maxResults', String(Math.min(100, safeMax - refs.length)))
-    if (pageToken) listUrl.searchParams.set('pageToken', pageToken)
-    const list = await getJson<{ messages?: GmailMessageRef[]; nextPageToken?: string }>(listUrl.toString(), accessToken)
-    refs.push(...(list.messages || []))
-    pageToken = list.nextPageToken || ''
-  } while (pageToken && refs.length < safeMax)
+  const queries = [
+    'newer_than:' + safeDays + 'd { "has shipped" shipped dispatch tracking "track your order" "track your package" shipment parcel "shipping confirmation" "on its way" versendet verschickt versandbestätigung sendungsnummer sendungsverfolgung unterwegs } -category:social -in:spam -in:trash',
+    'newer_than:' + safeDays + 'd { "handed to carrier" "carrier picked up" "left the warehouse" "left our warehouse" "delivery attempt" "ready for pickup" "available for pickup" "arriving today" "your parcel is moving" "Versandmitteilung" "Paket wurde abgeholt" "versandfertig" "an den Versanddienstleister übergeben" } -category:social -in:spam -in:trash',
+  ]
+  const refsById = new Map<string, GmailMessageRef>()
+  // Preserve the original query and add a supplemental search for handover,
+  // pickup and last-mile messages. The parser still validates every candidate.
+  for (const [queryIndex, query] of queries.entries()) {
+    const queryLimit = queryIndex === 0 ? safeMax : Math.min(120, safeMax)
+    let pageToken = ''
+    let queryCount = 0
+    do {
+      const listUrl = new URL(GMAIL_API + '/messages')
+      listUrl.searchParams.set('q', query)
+      listUrl.searchParams.set('maxResults', String(Math.min(100, queryLimit - queryCount)))
+      if (pageToken) listUrl.searchParams.set('pageToken', pageToken)
+      const list = await getJson<{ messages?: GmailMessageRef[]; nextPageToken?: string }>(listUrl.toString(), accessToken)
+      for (const ref of list.messages || []) refsById.set(ref.id, ref)
+      queryCount += (list.messages || []).length
+      pageToken = list.nextPageToken || ''
+    } while (pageToken && queryCount < queryLimit)
+  }
+  const refs = [...refsById.values()]
 
   const uniqueRefs = [...new Map(refs.map(ref => [ref.id, ref])).values()]
   const messages: GmailMessage[] = []
   for (let index = 0; index < uniqueRefs.length; index += 6) {
     const batch = uniqueRefs.slice(index, index + 6)
-    const fetched = await Promise.all(batch.map(ref => {
+    const fetched = await Promise.allSettled(batch.map(ref => {
       const url = new URL(GMAIL_API + '/messages/' + encodeURIComponent(ref.id))
       url.searchParams.set('format', 'full')
       return getJson<GmailMessage>(url.toString(), accessToken)
     }))
-    messages.push(...fetched)
+    for (const result of fetched) {
+      if (result.status === 'fulfilled') messages.push(result.value)
+      else {
+        const detail = result.reason instanceof Error ? result.reason.message : ''
+        if (detail.includes('abgelaufen') || detail.includes('abgelehnt')) throw result.reason
+        // A deleted, malformed or transiently unavailable individual message
+        // should not discard the remaining valid Gmail search results.
+      }
+    }
   }
 
   const existingUrls = new Set(products.flatMap(product =>
@@ -428,15 +585,23 @@ export async function scanGmailForTracking(
       .map(canonicalTrackingUrl)
   ))
   const candidates = messages.flatMap(message => parseMessage(message, products))
-    .filter(candidate => !existingUrls.has(canonicalTrackingUrl(candidate.trackingUrl)))
+    .filter(candidate => !candidate.trackingUrl || !existingUrls.has(canonicalTrackingUrl(candidate.trackingUrl)))
 
-  // The same tracking number is often repeated in order, dispatch and follow-up
-  // messages. Keep only the newest useful message for each physical shipment.
+  const existingNumbers = new Set(products.flatMap(product =>
+    [product.incomingTrackingNumber, product.outgoingTrackingNumber]
+      .filter((value): value is string => Boolean(value))
+      .map(value => value.toUpperCase().replace(/[^A-Z0-9]/g, ''))
+  ))
+  const newCandidates = candidates.filter(candidate =>
+    !candidate.trackingNumber ||
+    !existingNumbers.has(candidate.trackingNumber.toUpperCase().replace(/[^A-Z0-9]/g, ''))
+  )
+
+  // Repeated status emails for a parcel are one shipment. When a retailer
+  // provides only a number, use the message ID rather than an empty URL key.
   const deduplicated = new Map<string, GmailTrackingCandidate>()
-  for (const candidate of candidates) {
-    const key = candidate.trackingNumber
-      ? 'number:' + candidate.trackingNumber.toUpperCase().replace(/[^A-Z0-9]/g, '')
-      : 'url:' + canonicalTrackingUrl(candidate.trackingUrl)
+  for (const candidate of newCandidates) {
+    const key = trackingCandidateDedupKey(candidate)
     const previous = deduplicated.get(key)
     if (!previous || candidate.date > previous.date) deduplicated.set(key, candidate)
   }
@@ -452,7 +617,7 @@ export async function rankGmailCandidatesWithAI(
   accessToken: string,
   candidates: GmailTrackingCandidate[],
   products: MatchableProduct[],
-): Promise<AiProductMatch[]> {
+): Promise<{ matches: AiProductMatch[]; modelsUsed: string[] }> {
   if (!accessToken) throw new Error('Gmail muss für den KI-Abgleich verbunden sein.')
   const response = await fetch('/api/shipping/match', {
     method: 'POST',
@@ -484,6 +649,87 @@ export async function rankGmailCandidatesWithAI(
     const detail = await response.json().catch(() => ({})) as { error?: string }
     throw new Error(detail.error || 'Der KI-Produktabgleich ist fehlgeschlagen (HTTP ' + response.status + ').')
   }
-  const result = await response.json() as { matches?: AiProductMatch[] }
-  return Array.isArray(result.matches) ? result.matches : []
+  const result = await response.json() as { matches?: AiProductMatch[]; modelsUsed?: string[] }
+  return {
+    matches: Array.isArray(result.matches) ? result.matches : [],
+    modelsUsed: Array.isArray(result.modelsUsed) ? result.modelsUsed : [],
+  }
+}
+
+function subjectTokens(subject: string): string[] {
+  return productTokens(subject)
+}
+
+export function createGmailLearningHint(
+  candidate: GmailTrackingCandidate,
+  productId: string,
+  products: MatchableProduct[],
+  approvedAt = new Date().toISOString(),
+): GmailLearningHint | null {
+  const product = products.find(item => item.id === productId)
+  if (!product || !candidate.senderDomain) return null
+  const productIdentity = normalizeText(product.name) + '|' + normalizeText(product.category || '') + '|' + normalizeText(product.platform || '')
+  const equivalentProducts = products.filter(item =>
+    normalizeText(item.name) + '|' + normalizeText(item.category || '') + '|' + normalizeText(item.platform || '') === productIdentity
+  )
+  // Never teach a specific unit from a duplicate stock group: an otherwise
+  // correct subject could later point to the wrong physical copy.
+  if (equivalentProducts.length !== 1) return null
+  const tokens = subjectTokens(candidate.subject)
+  const productWords = new Set(productTokens(product.name))
+  const relevant = tokens.filter(token => productWords.has(token))
+  const hasDistinctiveToken = relevant.some(token => token.length >= 8)
+  if (relevant.length < 3 && !hasDistinctiveToken) return null
+  return {
+    senderDomain: candidate.senderDomain.toLowerCase(),
+    productId,
+    direction: candidate.direction,
+    subjectTokens: [...new Set(relevant)],
+    approvedAt,
+  }
+}
+
+export function applyLearnedGmailMatch(
+  candidate: GmailTrackingCandidate,
+  products: MatchableProduct[],
+  hints: GmailLearningHint[],
+): GmailTrackingCandidate {
+  if (!candidate.senderDomain) return candidate
+  const candidateWords = new Set(subjectTokens(candidate.subject))
+  const ranked = hints
+    .filter(hint => {
+      if (hint.senderDomain.toLowerCase() !== candidate.senderDomain.toLowerCase() || hint.direction !== candidate.direction) return false
+      const product = products.find(item => item.id === hint.productId)
+      if (!product) return false
+      const identity = normalizeText(product.name) + '|' + normalizeText(product.category || '') + '|' + normalizeText(product.platform || '')
+      return products.filter(item =>
+        normalizeText(item.name) + '|' + normalizeText(item.category || '') + '|' + normalizeText(item.platform || '') === identity
+      ).length === 1
+    })
+    .map(hint => {
+      const overlap = hint.subjectTokens.filter(token => candidateWords.has(token))
+      const longToken = overlap.some(token => token.length >= 8)
+      const sufficient = overlap.length >= 3 || longToken
+      return { hint, overlap: overlap.length, sufficient, score: overlap.length / Math.max(1, hint.subjectTokens.length) }
+    })
+    .filter(item => item.sufficient)
+    .sort((a, b) => b.score - a.score || b.overlap - a.overlap)
+  const best = ranked[0]
+  const second = ranked[1]
+  if (!best || (second && best.score - second.score < 0.2 && best.hint.productId !== second.hint.productId)) return candidate
+  if (candidate.suggestedProductId && candidate.matchConfidence >= 0.9 && candidate.suggestedProductId !== best.hint.productId) return candidate
+  return {
+    ...candidate,
+    suggestedProductId: best.hint.productId,
+    matchConfidence: Math.max(candidate.matchConfidence, 0.92),
+    matchSource: 'Eigene bestätigte Zuordnung',
+    matchReason: 'Absender und markante Betreffbegriffe stimmen mit einer früher von dir bestätigten Zuordnung überein.',
+  }
+}
+
+export function mergeGmailLearningHint(hints: GmailLearningHint[], next: GmailLearningHint | null): GmailLearningHint[] {
+  if (!next) return hints
+  const key = (item: GmailLearningHint) =>
+    item.senderDomain + '|' + item.direction + '|' + item.productId + '|' + [...item.subjectTokens].sort().join('|')
+  return [next, ...hints.filter(item => key(item) !== key(next))].slice(0, 100)
 }

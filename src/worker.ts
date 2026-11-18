@@ -1,7 +1,7 @@
 interface Env {
   ASSETS: { fetch(request: Request): Promise<Response> }
   AI: {
-    run(model: string, input: { text: string[] }): Promise<unknown>
+    run(model: string, input: Record<string, unknown>): Promise<unknown>
   }
 }
 
@@ -20,6 +20,14 @@ type MatchProduct = {
   purchaseDate?: string
   saleDate?: string
   status?: string
+}
+type RankedModelMatch = {
+  productId: string
+  score: number
+  rerankerScore: number
+  bgeScore: number
+  gemmaScore: number
+  lexicalScore: number
 }
 
 const aiRequestWindows = new Map<string, { startedAt: number; count: number }>()
@@ -92,10 +100,17 @@ function cosineSimilarity(left: number[], right: number[]): number {
   return dot / Math.sqrt(leftNorm * rightNorm)
 }
 
-function vectorsFromResult(rawValue: unknown, expectedCount: number): number[][] {
+function normalizedCosine(value: number): number {
+  // For these retrieval models, random unrelated text often has a positive
+  // cosine baseline. Scale the useful semantic range instead of treating
+  // every unrelated pair as a 0.5 match.
+  return Math.max(0, Math.min(1, (value - 0.2) / 0.6))
+}
+
+function bgeVectors(rawValue: unknown, expectedCount: number): number[][] {
   if (!rawValue || typeof rawValue !== 'object') return []
   const raw = rawValue as { data?: unknown; embeddings?: unknown; shape?: number[] }
-  let values: unknown = raw.data ?? raw.embeddings
+  const values = raw.data ?? raw.embeddings
   if (!Array.isArray(values)) return []
   if (values.length && typeof values[0] === 'number') {
     const dimensions = Number(raw.shape?.[1] || 0)
@@ -109,6 +124,30 @@ function vectorsFromResult(rawValue: unknown, expectedCount: number): number[][]
     .filter(row => row.length > 0 && row.every(Number.isFinite))
 }
 
+function gemmaVectors(rawValue: unknown, expectedCount: number): number[][] {
+  if (!rawValue || typeof rawValue !== 'object') return []
+  const raw = rawValue as { data?: unknown }
+  if (!Array.isArray(raw.data) || raw.data.length !== expectedCount) return []
+  const indexed: number[][] = Array.from({ length: expectedCount }, () => [])
+  for (const item of raw.data as Array<{ index?: number; embedding?: number[] }>) {
+    const index = Number(item?.index)
+    const embedding = item?.embedding
+    if (!Number.isInteger(index) || index < 0 || index >= expectedCount || !Array.isArray(embedding)) return []
+    indexed[index] = embedding.map(Number)
+  }
+  return indexed.every(row => row.length > 0 && row.every(Number.isFinite)) ? indexed : []
+}
+
+function rerankerResults(rawValue: unknown): Array<{ id: number; score: number }> {
+  if (!rawValue || typeof rawValue !== 'object') return []
+  const raw = rawValue as { response?: unknown }
+  if (!Array.isArray(raw.response)) return []
+  return raw.response.map((item: any) => ({
+    id: Number(item?.id),
+    score: Number(item?.score),
+  })).filter(item => Number.isInteger(item.id) && Number.isFinite(item.score))
+}
+
 function dateBonus(candidate: MatchCandidate, product: MatchProduct): number {
   const messageTime = Date.parse(candidate.date || '')
   const purchaseTime = Date.parse(product.purchaseDate || '')
@@ -117,11 +156,11 @@ function dateBonus(candidate: MatchCandidate, product: MatchProduct): number {
   if (!Number.isFinite(messageTime) || !Number.isFinite(referenceTime)) return 0
   const days = (messageTime - referenceTime) / 86400000
   if (candidate.direction === 'incoming') {
-    if (days >= -2 && days <= 75) return 0.045
-    if (days < -30 || days > 180) return -0.025
+    if (days >= -2 && days <= 75) return 0.025
+    if (days < -30 || days > 180) return -0.02
   } else {
-    if (days >= -2 && days <= 45) return 0.055
-    if (days < -30 || days > 120) return -0.025
+    if (days >= -2 && days <= 45) return 0.03
+    if (days < -30 || days > 120) return -0.02
   }
   return 0
 }
@@ -140,7 +179,7 @@ async function allowAiRequest(token: string): Promise<boolean> {
     }
     return true
   }
-  if (current.count >= 20) return false
+  if (current.count >= 50) return false
   current.count++
   return true
 }
@@ -152,7 +191,7 @@ async function matchShippingProducts(request: Request, env: Env): Promise<Respon
     return jsonResponse({ error: 'Gmail muss verbunden sein, bevor die KI-Zuordnung genutzt werden kann.' }, 401)
   }
 
-  // Validate the short-lived token against the Gmail API. It is never stored.
+  // Verify the short-lived token with Google. It is never persisted or logged.
   const verification = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/profile', {
     headers: { Authorization: 'Bearer ' + token, Accept: 'application/json' },
   })
@@ -169,8 +208,8 @@ async function matchShippingProducts(request: Request, env: Env): Promise<Respon
   }
   const candidates = Array.isArray(body.candidates) ? body.candidates : []
   const products = Array.isArray(body.products) ? body.products : []
-  if (!candidates.length || candidates.length > 20 || !products.length || products.length > 70) {
-    return jsonResponse({ error: 'Der KI-Abgleich unterstützt 1–20 E-Mails und 1–70 Produkte pro Durchlauf.' }, 400)
+  if (!candidates.length || candidates.length > 40 || !products.length || products.length > 150) {
+    return jsonResponse({ error: 'Der KI-Abgleich unterstützt 1–40 E-Mails und 1–150 Produkte pro Durchlauf.' }, 400)
   }
 
   const cleanCandidates: MatchCandidate[] = []
@@ -205,47 +244,127 @@ async function matchShippingProducts(request: Request, env: Env): Promise<Respon
     })
   }
 
+  // Keep carrier/merchant domain as a secondary clue. The dedicated reranker
+  // query excludes it so a seller name alone cannot dominate the product match.
   const emailTexts = cleanCandidates.map(candidate =>
     'Versand-E-Mail. Betreff und Nachricht: ' + candidate.text + '. Absender-Domain: ' + candidate.senderDomain +
     '. Richtung: ' + (candidate.direction === 'incoming' ? 'Einkauf, Paket zum Nutzer' : 'Verkauf, Paket vom Nutzer')
   )
+  const rerankerQueries = cleanCandidates.map(candidate => candidate.text)
   const productTexts = cleanProducts.map(product =>
-    'Produkt: ' + product.name + '. Kategorie: ' + product.category + '. Verkaufsplattform oder Shop: ' + product.platform
+    'Produkt: ' + product.name + '. Kategorie: ' + product.category + '. Shop oder Verkaufsplattform: ' + product.platform
   )
-  let vectors: number[][]
-  try {
-    const raw = await env.AI.run('@cf/baai/bge-m3', { text: [...emailTexts, ...productTexts] })
-    vectors = vectorsFromResult(raw, emailTexts.length + productTexts.length)
-  } catch {
-    return jsonResponse({ error: 'Das KI-Modell ist gerade nicht erreichbar. Die normale Gmail-Erkennung bleibt verfügbar.' }, 503)
-  }
-  if (vectors.length !== emailTexts.length + productTexts.length) {
-    return jsonResponse({ error: 'Das KI-Modell hat ein unerwartetes Ergebnis geliefert. Bitte versuche es erneut.' }, 502)
+  const total = emailTexts.length + productTexts.length
+
+  const [bgeResult, gemmaResult] = await Promise.allSettled([
+    env.AI.run('@cf/baai/bge-m3', { text: [...emailTexts, ...productTexts] }),
+    env.AI.run('@cf/google/embeddinggemma-2', {
+      input: [
+        ...emailTexts.map(text => 'task: search result | query: ' + text),
+        ...productTexts.map((text, index) => 'title: ' + cleanProducts[index].name + ' | text: ' + text),
+      ],
+      dimensions: 768,
+    }),
+  ])
+  const bge = bgeResult.status === 'fulfilled' ? bgeVectors(bgeResult.value, total) : []
+  const gemma = gemmaResult.status === 'fulfilled' ? gemmaVectors(gemmaResult.value, total) : []
+  const availableModels = [
+    ...(bge.length === total ? ['BGE-M3'] : []),
+    ...(gemma.length === total ? ['EmbeddingGemma 2'] : []),
+  ]
+  if (!availableModels.length) {
+    return jsonResponse({ error: 'Die Embedding-Modelle sind momentan nicht erreichbar. Die lokale Gmail-Erkennung bleibt verfügbar.' }, 503)
   }
 
-  const matches = cleanCandidates.map((candidate, candidateIndex) => {
-    const emailVector = vectors[candidateIndex]
-    const ranked = cleanProducts.map((product, productIndex) => {
-      const semanticScore = cosineSimilarity(emailVector, vectors[emailTexts.length + productIndex])
-      const lexicalScore = lexicalSimilarity(candidate.text, product.name)
-      const score = Math.max(0, Math.min(1,
-        semanticScore * 0.78 + lexicalScore * 0.22 + dateBonus(candidate, product)
-      ))
-      return { productId: product.id, score, semanticScore, lexicalScore }
+  const matches = await Promise.all(cleanCandidates.map(async (candidate, candidateIndex) => {
+    const initial = cleanProducts.map((product, productIndex) => {
+      const bgeSimilarity = bge.length === total
+        ? cosineSimilarity(bge[candidateIndex], bge[emailTexts.length + productIndex])
+        : 0
+      const gemmaSimilarity = gemma.length === total
+        ? cosineSimilarity(gemma[candidateIndex], gemma[emailTexts.length + productIndex])
+        : 0
+      const lexicalScore = lexicalSimilarity(candidate.text, product.name + ' ' + product.category)
+      const bgeNormalized = bge.length === total ? normalizedCosine(bgeSimilarity) : 0
+      const gemmaNormalized = gemma.length === total ? normalizedCosine(gemmaSimilarity) : 0
+      const retrievalScore = bge.length === total && gemma.length === total
+        ? bgeNormalized * 0.42 + gemmaNormalized * 0.42 + lexicalScore * 0.16
+        : (bge.length === total ? bgeNormalized : gemmaNormalized) * 0.82 + lexicalScore * 0.18
+      return { productId: product.id, productIndex, bgeSimilarity, gemmaSimilarity, bgeNormalized, gemmaNormalized, lexicalScore, retrievalScore }
+    }).sort((left, right) => right.retrievalScore - left.retrievalScore)
+    const shortlist = initial.slice(0, Math.min(10, initial.length))
+    let reranked: Array<{ id: number; score: number }> = []
+    if (shortlist.length) {
+      try {
+        const raw = await env.AI.run('@cf/baai/bge-reranker-base', {
+          query: rerankerQueries[candidateIndex],
+          contexts: shortlist.map(item => {
+            const product = cleanProducts[item.productIndex]
+            return { text: product.name + '. Kategorie: ' + product.category + '. Händler oder Verkaufsplattform: ' + product.platform + '.' }
+          }),
+          top_k: shortlist.length,
+        })
+        reranked = rerankerResults(raw)
+      } catch {
+        reranked = []
+      }
+    }
+    const rankById = new Map(reranked.map(item => [item.id, item.score]))
+    const hasReranker = reranked.length > 0
+    const ranked: RankedModelMatch[] = shortlist.map((item, shortlistIndex) => {
+      const rerankerScore = rankById.get(shortlistIndex) ?? 0
+      const score = hasReranker
+        ? rerankerScore * 0.50 + item.gemmaNormalized * 0.20 + item.bgeNormalized * 0.15 +
+          item.lexicalScore * 0.10 + dateBonus(candidate, cleanProducts[item.productIndex])
+        : item.retrievalScore * 0.92 + dateBonus(candidate, cleanProducts[item.productIndex])
+      return {
+        productId: item.productId,
+        score: Math.max(0, Math.min(1, score)),
+        rerankerScore,
+        bgeScore: item.bgeSimilarity,
+        gemmaScore: item.gemmaSimilarity,
+        lexicalScore: item.lexicalScore,
+      }
     }).sort((left, right) => right.score - left.score)
+
     const best = ranked[0]
     const second = ranked[1]
-    const hasClearLead = !second || best.score - second.score >= 0.055
-    const hasEnoughEvidence = best.semanticScore >= 0.43 && (best.lexicalScore >= 0.12 || best.semanticScore >= 0.64)
+    const bgeRank = bge.length === total
+      ? [...initial].sort((left, right) => right.bgeNormalized - left.bgeNormalized).findIndex(item => item.productId === best?.productId)
+      : 99
+    const gemmaRank = gemma.length === total
+      ? [...initial].sort((left, right) => right.gemmaNormalized - left.gemmaNormalized).findIndex(item => item.productId === best?.productId)
+      : 99
+    const modelAgreement = bge.length === total && gemma.length === total
+      ? bgeRank <= 2 && gemmaRank <= 2
+      : bge.length === total ? bgeRank <= 1 : gemmaRank <= 1
+    const enoughEvidence = hasReranker
+      ? best.rerankerScore >= 0.05 && (best.lexicalScore >= 0.08 || modelAgreement || best.rerankerScore >= 0.62)
+      : modelAgreement && (best.lexicalScore >= 0.18 || Math.max(best.bgeScore, best.gemmaScore) >= 0.78)
+    const clearLead = !second || best.score - second.score >= (modelAgreement ? 0.055 : 0.085)
+    const approved = Boolean(best && best.score >= (hasReranker ? 0.35 : 0.45) && enoughEvidence && clearLead)
+    const reason = approved
+      ? modelAgreement && best.rerankerScore >= 0.55
+        ? 'Hohe Übereinstimmung: beide Embedding-Modelle und der Reranker stimmen überein.'
+        : hasReranker
+          ? 'Semantischer Produktabgleich durch BGE-M3, EmbeddingGemma 2 und direkten Reranker.'
+          : 'Vorläufiger Abgleich mit den verfügbaren Embedding-Modellen.'
+      : 'Keine ausreichend eindeutige Produktübereinstimmung. Bitte manuell auswählen.'
     return {
       candidateId: candidate.id,
-      productId: best.score >= 0.54 && hasClearLead && hasEnoughEvidence ? best.productId : '',
-      score: Number(best.score.toFixed(4)),
-      semanticScore: Number(best.semanticScore.toFixed(4)),
-      lexicalScore: Number(best.lexicalScore.toFixed(4)),
+      productId: approved ? best.productId : '',
+      score: Number((best?.score || 0).toFixed(4)),
+      semanticScore: Number((best ? Math.max(normalizedCosine(best.bgeScore), normalizedCosine(best.gemmaScore)) : 0).toFixed(4)),
+      lexicalScore: Number((best?.lexicalScore || 0).toFixed(4)),
+      rerankerScore: Number((best?.rerankerScore || 0).toFixed(4)),
+      modelAgreement,
+      reason,
     }
+  }))
+  return jsonResponse({
+    modelsUsed: [...availableModels, ...(matches.some(match => match.rerankerScore > 0) ? ['BGE-Reranker'] : [])],
+    matches,
   })
-  return jsonResponse({ model: '@cf/baai/bge-m3', matches })
 }
 
 export default {

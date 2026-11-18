@@ -12,6 +12,8 @@ The Reselling Manager searches Gmail on demand for parcel dispatch, handover, de
 
 The application uses Google's browser token flow and the read-only scope https://www.googleapis.com/auth/gmail.readonly. It does not request permission to send, delete, or modify email.
 
+Google access tokens from this browser flow are short-lived. Each manual Gmail scan requests a fresh token through Google Identity Services, so a later search can renew access after an earlier token expires. The app does not store a Gmail refresh token or keep a long-lived Gmail session in browser storage.
+
 ## Search and extraction
 
 - Gmail is searched only after a user action. The selected 30/90/180/365-day window is used.

@@ -180,8 +180,12 @@ test('uses the confirmed sender and subject pairing without guessing from sender
   }
   const hint = createGmailLearningHint(candidate, 'vinyl', products, '2026-11-18T10:01:00.000Z')
   assert.ok(hint)
+  const duplicateProducts = [
+    ...products,
+    { id: 'vinyl-duplicate', name: 'Taylor Swift The Life of a Showgirl Vinyl' },
+  ]
   const conflictingHint = { ...hint, productId: 'vinyl-duplicate' }
-  const ambiguous = applyLearnedGmailMatch(candidate, products, [hint, conflictingHint])
+  const ambiguous = applyLearnedGmailMatch(candidate, duplicateProducts, [hint, conflictingHint])
   assert.equal(ambiguous.suggestedProductId, '')
 })
 

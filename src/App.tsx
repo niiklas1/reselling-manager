@@ -2080,7 +2080,7 @@ function GmailShippingPanel({ products, onApply, initialClientId, initialLearnin
     } catch (scanError) {
       const detail = scanError instanceof Error ? scanError.message : 'Gmail-Suche fehlgeschlagen.'
       setError(detail)
-      if (detail.includes('abgelaufen')) setAccessToken('')
+      if (/abgelaufen|abgelehnt|HTTP 401|HTTP 403|invalid_token|unauthorized/i.test(detail)) setAccessToken('')
     } finally {
       setScanning(false)
     }
@@ -2097,7 +2097,11 @@ function GmailShippingPanel({ products, onApply, initialClientId, initialLearnin
       scope: 'https://www.googleapis.com/auth/gmail.readonly',
       callback: response => {
         if (response.error || !response.access_token) {
-          setError('Google-Anmeldung fehlgeschlagen: ' + (response.error || 'Kein Zugriffstoken erhalten.'))
+          setAccessToken('')
+          const reason = response.error || 'Kein Zugriffstoken erhalten.'
+          setError(/origin_mismatch|not a valid origin|origin mismatch/i.test(reason)
+            ? 'Google blockiert diese App-Adresse. Füge in deinem Gmail-OAuth-Client unter „Autorisierte JavaScript-Quellen“ genau diese Adresse hinzu: ' + window.location.origin
+            : 'Google-Anmeldung fehlgeschlagen: ' + reason)
           return
         }
         // The short-lived OAuth access token is never persisted in browser storage.
@@ -2106,7 +2110,13 @@ function GmailShippingPanel({ products, onApply, initialClientId, initialLearnin
         setAccessToken(response.access_token)
         void syncWithToken(response.access_token)
       },
-      error_callback: authError => setError(authError.message || 'Google-Anmeldung wurde abgebrochen.')
+      error_callback: authError => {
+        setAccessToken('')
+        const reason = authError.message || authError.type || 'Google-Anmeldung wurde abgebrochen.'
+        setError(/origin_mismatch|not a valid origin|origin mismatch/i.test(reason)
+          ? 'Google blockiert diese App-Adresse. Füge in deinem Gmail-OAuth-Client unter „Autorisierte JavaScript-Quellen“ genau diese Adresse hinzu: ' + window.location.origin
+          : reason)
+      }
     })
   }, [clientId, ready, products, days, aiMatching, learningHints])
 

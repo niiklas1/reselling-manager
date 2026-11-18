@@ -8,7 +8,7 @@ import {
   CircleHelp, LayoutDashboard, Menu, Package, Plus, Search, Settings,
   ShoppingBag, SlidersHorizontal, Sparkles, Wallet, X, Trash2, Pencil,
   CalendarDays, Tag, Truck, CheckCircle2, LoaderCircle, DollarSign,
-  Camera, FileText, FileUp, ImagePlus, Moon, Sun, ExternalLink, RefreshCw, HardDrive, Mail, LogOut
+  Camera, FileText, FileUp, ImagePlus, Moon, Sun, ExternalLink, RefreshCw, HardDrive, Mail, PlugZap, LogOut
 } from 'lucide-react'
 import { readInvoiceSource } from './lib/invoiceSource'
 import type { InvoiceLineItem } from './lib/invoiceScanner'
@@ -1331,7 +1331,7 @@ function App() {
     { label: 'Produkte', icon: Package },
     { label: 'Verkäufe', icon: ShoppingBag },
     { label: 'Auswertungen', icon: ChartNoAxesCombined },
-    { label: 'Integrationen', icon: Mail },
+    { label: 'Integrationen', icon: PlugZap },
   ]
 
   if (authLoading) {

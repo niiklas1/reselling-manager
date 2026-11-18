@@ -800,8 +800,9 @@ function moneyFromListing(value: any): { price: number | null; currency: string 
   }
   const currencies = [...new Set(prices.map(value => value.currency))]
   const currency = currencies.length === 1 ? currencies[0] : null
+  // For listings with variations, expose the lowest available fixed price ("ab").
   const price = prices.length && currency
-    ? prices.reduce((sum, value) => sum + value.price, 0) / prices.length
+    ? Math.min(...prices.map(value => value.price))
     : null
   return { price, currency, quantity: items.length ? quantity : null }
 }

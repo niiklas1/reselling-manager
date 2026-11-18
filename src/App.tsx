@@ -1433,7 +1433,7 @@ function GmailShippingPanel({ products, onApply }: {
           const usedModels = new Set<string>()
           const aiProducts = [...products]
             .sort((a, b) => (b.purchaseDate || b.saleDate || '').localeCompare(a.purchaseDate || a.saleDate || ''))
-            .slice(0, 70)
+            .slice(0, 150)
           for (let index = 0; index < found.length; index += 20) {
             const result = await rankGmailCandidatesWithAI(value, found.slice(index, index + 20), aiProducts)
             matches.push(...result.matches)
@@ -1456,7 +1456,7 @@ function GmailShippingPanel({ products, onApply }: {
             ? ' KI-Prüfung: ' + [...usedModels].join(' + ') + '.'
             : ' KI-Abgleich ohne verfügbare Modell-Antwort.'
           if (products.length > aiProducts.length) {
-            aiSummary += ' Berücksichtigt wurden die 70 zuletzt bearbeiteten Produkte.'
+            aiSummary += ' Berücksichtigt wurden die 150 zuletzt bearbeiteten Produkte.'
           }
         } catch (aiError) {
           const detail = aiError instanceof Error ? aiError.message : 'Unbekannter KI-Fehler.'
@@ -1502,7 +1502,7 @@ function GmailShippingPanel({ products, onApply }: {
       },
       error_callback: authError => setError(authError.message || 'Google-Anmeldung wurde abgebrochen.')
     })
-  }, [clientId, ready, products, days, aiMatching])
+  }, [clientId, ready, products, days, aiMatching, learningHints])
 
   function connectAndScan() {
     setError('')

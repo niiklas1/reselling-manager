@@ -144,7 +144,7 @@ function hasTrackingEndpoint(url: URL): boolean {
 function resemblesCarrierSpoof(hostname: string): boolean {
   if (identifyCarrier(hostname)) return false
   const labels = hostname.toLowerCase().split('.')
-  const brands = ['dhl', 'dpd', 'hermes', 'evri', 'gls', 'ups', 'fedex', 'inpost', 'postnl', 'chronopost']
+  const brands = ['dhl', 'dpd', 'hermes', 'evri', 'gls', 'ups', 'fedex', 'inpost', 'postnl', 'chronopost', 'royalmail', 'usps', 'laposte', 'canadapost', 'auspost', 'correos', 'poste', 'mondialrelay', 'yodel', 'cainiao', 'yunexpress', '4px', 'asendia', 'aramex', 'sfexpress', 'postnord', 'anpost', 'parcelforce', 'bpost']
   return labels.some(label => brands.some(brand => label === brand || label.startsWith(brand + '-') || label.endsWith('-' + brand)))
 }
 
@@ -303,8 +303,25 @@ function trackingNumberFromUrl(rawUrl: string): string {
   }
 }
 
+export function decodeMimeWords(value: string): string {
+  return value.replace(/=\\?([^?]+)\\?([bq])\\?([^?]*)\\?=/gi, (whole, charset: string, encoding: string, payload: string) => {
+    try {
+      if (encoding.toLowerCase() === 'b') {
+        const binary = atob(payload)
+        const bytes = Uint8Array.from(binary, char => char.charCodeAt(0))
+        return new TextDecoder(charset || 'utf-8').decode(bytes)
+      }
+      const decoded = payload.replace(/_/g, ' ').replace(/=([0-9a-f]{2})/gi, '%$1')
+      return decodeURIComponent(decoded)
+    } catch {
+      return whole
+    }
+  })
+}
+
 function headerValue(headers: GmailHeader[] | undefined, name: string): string {
-  return headers?.find(header => header.name?.toLowerCase() === name.toLowerCase())?.value || ''
+  const value = headers?.find(header => header.name?.toLowerCase() === name.toLowerCase())?.value || ''
+  return decodeMimeWords(value)
 }
 
 function senderDomain(sender: string): string {

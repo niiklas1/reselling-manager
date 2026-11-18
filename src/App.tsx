@@ -1466,8 +1466,9 @@ function GmailShippingPanel({ products, onApply }: {
           setError('Google-Anmeldung fehlgeschlagen: ' + (response.error || 'Kein Zugriffstoken erhalten.'))
           return
         }
-        // The short-lived OAuth access token stays in component memory only.
-        // It is deliberately never written to localStorage or sent to our Worker.
+        // The short-lived OAuth access token is never persisted in browser storage.
+        // Only when the user enables AI matching is it sent transiently to our Worker
+        // so the Worker can verify Gmail access before processing minimized text.
         setAccessToken(response.access_token)
         void syncWithToken(response.access_token)
       },

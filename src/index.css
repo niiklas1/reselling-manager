@@ -370,3 +370,80 @@ body{background:#f1eff8}
 .filter-controls{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .filter-controls .filter-control select{min-width:112px}
 @media(max-width:720px){.filter-controls{align-self:flex-start}}
+
+/* Product shipping and Gmail import */
+.shipping-form-block{grid-column:1/-1;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.shipping-form-block section{display:grid;gap:9px;padding:13px;border:1px solid #e7e9f0;border-radius:10px;background:#fafbfe;min-width:0}
+.shipping-form-block section>strong{font-size:10px;color:#4b566b;margin-bottom:2px}
+.tracking-inline{display:flex;align-items:center;gap:5px;width:max-content;max-width:100%;margin-top:5px;padding:4px 6px;border:1px solid #e6e3ef;border-radius:6px;background:#faf9fd;color:#6d56b6;font-size:8px;font-weight:700;text-decoration:none;overflow-wrap:anywhere}
+.tracking-inline:hover{text-decoration:underline;background:#f2edff}
+.tracking-inline.outgoing{border-color:#dcebe5;background:#f5fbf8;color:#367e63}
+.gmail-panel{display:grid;gap:13px;padding:17px 0 19px;border-bottom:1px solid #eef0f3}
+.gmail-panel-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:14px}
+.gmail-panel-heading>div{display:flex;align-items:flex-start;gap:10px;min-width:0}
+.gmail-panel-icon{width:32px;height:32px;display:grid;place-items:center;border-radius:9px;background:#f1edff;color:#7455cf;flex-shrink:0}
+.gmail-panel-heading strong{display:block;font-size:12px;color:#414b60}
+.gmail-panel-heading p{margin:4px 0 0;color:#8991a1;font-size:9px;line-height:1.55}
+.gmail-readonly{padding:5px 8px;border-radius:20px;background:#eaf5ef;color:#438263;font-size:8px;font-weight:800;white-space:nowrap}
+.gmail-setup{display:grid;gap:8px;padding:12px;border:1px solid #e8e5f0;border-radius:10px;background:#fbfaff}
+.gmail-setup>small,.gmail-privacy{font-size:8px;color:#8991a1;line-height:1.55}
+.gmail-setup-links{display:flex;gap:14px;flex-wrap:wrap}
+.gmail-setup-links a,.gmail-track-link{display:inline-flex;align-items:center;gap:4px;color:#7556d2;font-size:9px;font-weight:700;text-decoration:none;overflow-wrap:anywhere}
+.gmail-setup-links a:hover,.gmail-track-link:hover{text-decoration:underline}
+.gmail-origin{display:flex;align-items:center;gap:7px;flex-wrap:wrap;padding-top:8px;border-top:1px solid #e9e6f0}
+.gmail-origin span{font-size:8px;color:#8991a1}
+.gmail-origin code{font-size:9px;color:#55506d;overflow-wrap:anywhere}
+.gmail-origin button{border:0;background:transparent;color:#7556d2;font-size:8px;font-weight:800;cursor:pointer}
+.gmail-controls{display:flex;align-items:flex-end;gap:9px;flex-wrap:wrap}
+.gmail-controls>.field{width:180px;max-width:100%;margin:0}
+.gmail-controls>.button-primary,.gmail-controls>.button-ghost{min-height:36px}
+.gmail-message,.gmail-error{margin:0;padding:9px 11px;border-radius:8px;font-size:9px;line-height:1.5}
+.gmail-message{background:#edf6f0;color:#397b5b}
+.gmail-error{background:#fff0f0;color:#a84949}
+.gmail-candidates{display:grid;gap:9px}
+.gmail-candidates-heading{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.gmail-candidates-heading strong{font-size:10px;color:#4b556b}
+.gmail-candidates-heading span{font-size:8px;color:#8991a1}
+.gmail-candidate{display:grid;gap:8px;padding:12px;border:1px solid #e7e4ef;border-radius:10px;background:#fff}
+.gmail-candidate-top{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}
+.gmail-candidate-top>div{display:grid;gap:4px;min-width:0}
+.gmail-candidate-top strong{font-size:10px;color:#475167;overflow-wrap:anywhere}
+.gmail-candidate-top small,.gmail-candidate>small{font-size:8px;color:#8991a1;overflow-wrap:anywhere}
+.gmail-candidate>p{margin:0;color:#7f8798;font-size:8px;line-height:1.45;overflow-wrap:anywhere}
+.gmail-direction{padding:4px 7px;border-radius:20px;font-size:8px;font-weight:800;white-space:nowrap}
+.gmail-direction.incoming{background:#edf4ff;color:#4a70a6}
+.gmail-direction.outgoing{background:#eaf5ef;color:#438263}
+.gmail-track-link{max-width:100%;font-size:8px;line-height:1.4}
+.gmail-candidate-actions{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(0,1fr) auto auto;align-items:end;gap:8px;padding-top:8px;border-top:1px solid #eef0f3}
+.gmail-candidate-actions .field{min-width:0;margin:0}
+.gmail-candidate-actions button{min-height:34px;white-space:nowrap}
+:root[data-theme="dark"] .shipping-form-block section{background:#191e34;border-color:#393653}
+:root[data-theme="dark"] .shipping-form-block section>strong{color:#e8e5f5}
+:root[data-theme="dark"] .tracking-inline{background:#211e39;border-color:#3a3157;color:#d0adff}
+:root[data-theme="dark"] .tracking-inline.outgoing{background:#19342f;border-color:#2e594d;color:#8fe0be}
+:root[data-theme="dark"] .gmail-panel{border-color:#2a2a44}
+:root[data-theme="dark"] .gmail-panel-heading strong,:root[data-theme="dark"] .gmail-candidates-heading strong,:root[data-theme="dark"] .gmail-candidate-top strong{color:#e8e5f5}
+:root[data-theme="dark"] .gmail-panel-heading p,:root[data-theme="dark"] .gmail-setup>small,:root[data-theme="dark"] .gmail-privacy,:root[data-theme="dark"] .gmail-origin span,:root[data-theme="dark"] .gmail-candidate-top small,:root[data-theme="dark"] .gmail-candidate>small,:root[data-theme="dark"] .gmail-candidates-heading span{color:#a1a8c0}
+:root[data-theme="dark"] .gmail-panel-icon{background:#30264d;color:#d0adff}
+:root[data-theme="dark"] .gmail-readonly,:root[data-theme="dark"] .gmail-message{background:#193a32;color:#8fe0be}
+:root[data-theme="dark"] .gmail-setup,:root[data-theme="dark"] .gmail-candidate{background:#191e34;border-color:#393653}
+:root[data-theme="dark"] .gmail-setup-links a,:root[data-theme="dark"] .gmail-origin code,:root[data-theme="dark"] .gmail-origin button,:root[data-theme="dark"] .gmail-track-link{color:#d0adff}
+:root[data-theme="dark"] .gmail-origin{border-color:#393653}
+:root[data-theme="dark"] .gmail-error{background:#3b2029;color:#ffb0b5}
+:root[data-theme="dark"] .gmail-candidate>p{color:#a1a8c0}
+:root[data-theme="dark"] .gmail-direction.incoming{background:#233752;color:#a6c9ff}
+:root[data-theme="dark"] .gmail-direction.outgoing{background:#193a32;color:#8fe0be}
+:root[data-theme="dark"] .gmail-candidate-actions{border-color:#393653}
+@media(max-width:720px){
+  .shipping-form-block{grid-template-columns:1fr}
+  .gmail-controls{align-items:stretch}
+  .gmail-controls>.field{width:100%}
+  .gmail-controls>.button-primary,.gmail-controls>.button-ghost{justify-content:center}
+  .gmail-candidate-actions{grid-template-columns:1fr 1fr}
+  .gmail-candidate-actions>.field:first-child{grid-column:1/-1}
+}
+@media(max-width:460px){
+  .gmail-candidate-actions{grid-template-columns:1fr}
+  .gmail-candidate-actions>.field:first-child{grid-column:auto}
+  .gmail-panel-heading{flex-direction:column}
+}

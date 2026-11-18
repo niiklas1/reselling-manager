@@ -101,7 +101,10 @@ function cosineSimilarity(left: number[], right: number[]): number {
 }
 
 function normalizedCosine(value: number): number {
-  return Math.max(0, Math.min(1, (value + 1) / 2))
+  // For these retrieval models, random unrelated text often has a positive
+  // cosine baseline. Scale the useful semantic range instead of treating
+  // every unrelated pair as a 0.5 match.
+  return Math.max(0, Math.min(1, (value - 0.2) / 0.6))
 }
 
 function bgeVectors(rawValue: unknown, expectedCount: number): number[][] {
@@ -313,7 +316,7 @@ async function matchShippingProducts(request: Request, env: Env): Promise<Respon
     const ranked: RankedModelMatch[] = shortlist.map((item, shortlistIndex) => {
       const rerankerScore = rankById.get(shortlistIndex) ?? 0
       const score = hasReranker
-        ? rerankerScore * 0.60 + item.gemmaNormalized * 0.14 + item.bgeNormalized * 0.12 +
+        ? rerankerScore * 0.50 + item.gemmaNormalized * 0.20 + item.bgeNormalized * 0.15 +
           item.lexicalScore * 0.10 + dateBonus(candidate, cleanProducts[item.productIndex])
         : item.retrievalScore * 0.92 + dateBonus(candidate, cleanProducts[item.productIndex])
       return {
@@ -338,10 +341,10 @@ async function matchShippingProducts(request: Request, env: Env): Promise<Respon
       ? bgeRank <= 2 && gemmaRank <= 2
       : bge.length === total ? bgeRank <= 1 : gemmaRank <= 1
     const enoughEvidence = hasReranker
-      ? best.rerankerScore >= 0.3 && (best.lexicalScore >= 0.08 || modelAgreement || best.rerankerScore >= 0.62)
-      : modelAgreement && (best.lexicalScore >= 0.18 || normalizedCosine(Math.max(best.bgeScore, best.gemmaScore)) >= 0.82)
+      ? best.rerankerScore >= 0.05 && (best.lexicalScore >= 0.08 || modelAgreement || best.rerankerScore >= 0.62)
+      : modelAgreement && (best.lexicalScore >= 0.18 || Math.max(best.bgeScore, best.gemmaScore) >= 0.78)
     const clearLead = !second || best.score - second.score >= (modelAgreement ? 0.055 : 0.085)
-    const approved = Boolean(best && best.score >= (hasReranker ? 0.48 : 0.62) && enoughEvidence && clearLead)
+    const approved = Boolean(best && best.score >= (hasReranker ? 0.35 : 0.45) && enoughEvidence && clearLead)
     const reason = approved
       ? modelAgreement && best.rerankerScore >= 0.55
         ? 'Hohe Übereinstimmung: beide Embedding-Modelle und der Reranker stimmen überein.'

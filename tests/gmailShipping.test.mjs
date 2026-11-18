@@ -17,6 +17,12 @@ test('recognizes common German and international carriers', () => {
   assert.equal(identifyCarrier('https://www.myhermes.de/'), 'Hermes')
   assert.equal(identifyCarrier('https://tracking.dhl.de/'), 'DHL')
   assert.equal(identifyCarrier('https://dhl.attacker.example/'), '')
+  assert.equal(identifyCarrier('https://www.royalmail.com/track-your-item'), 'Royal Mail')
+  assert.equal(identifyCarrier('https://www.usps.com/'), 'USPS')
+  assert.equal(identifyCarrier('https://www.post.at/s/sendungssuche'), 'Österreichische Post')
+  assert.equal(identifyCarrier('https://global.cainiao.com/'), 'Cainiao')
+  assert.equal(identifyCarrier('https://www.yunexpress.com/'), 'YunExpress')
+  assert.equal(identifyCarrier('https://www.sf-express.com/'), 'SF Express')
 })
 
 test('accepts explicit tracking endpoints and rejects unsafe or unrelated URLs', () => {

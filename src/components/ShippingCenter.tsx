@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { supabase } from '../lib/supabase'
 import {
   AlertTriangle, ArrowUpRight, CheckCircle2, Clock3, ExternalLink, LoaderCircle,
   MapPin, PackageCheck, RefreshCw, Truck,
@@ -47,7 +48,7 @@ type ApiStatus = {
   trackings: TrackingRow[]
 }
 
-type Props = { products: ShippingProduct[]; accessToken: string }
+type Props = { products: ShippingProduct[]; accessToken: string; userId: string }
 
 type DisplayShipment = {
   id: string
@@ -154,7 +155,7 @@ function ShipmentCard({ shipment, liveTrackingEnabled }: {
   )
 }
 
-export default function ShippingCenter({ products, accessToken }: Props) {
+export default function ShippingCenter({ products, accessToken, userId }: Props) {
   const [apiStatus, setApiStatus] = useState<ApiStatus>({
     apiAvailable: false,
     webhookConfigured: false,
@@ -178,7 +179,7 @@ export default function ShippingCenter({ products, accessToken }: Props) {
     return payload.apiAvailable
   }, [accessToken])
 
-  const refresh = useCallback(async (silent = false) => {
+  const refresh = useCallback(async (silent = false, forceRefresh = false) => {
     if (!silent) setSyncing(true)
     setError('')
     setMessage('')
@@ -190,7 +191,7 @@ export default function ShippingCenter({ products, accessToken }: Props) {
           Accept: 'application/json',
           'Content-Type': 'application/json',
         },
-        body: '{}',
+        body: JSON.stringify({ forceRefresh }),
       })
       const result = await readPayload<{ registered: number; updated: number; total: number }>(response)
       await loadStatus()
@@ -220,8 +221,19 @@ export default function ShippingCenter({ products, accessToken }: Props) {
       }
     }
     void initialise()
-    return () => { active = false }
-  }, [loadStatus, refresh])
+    const channel = supabase.channel('shipping-trackings-' + userId)
+      .on('postgres_changes', {
+        event: '*',
+        schema: 'public',
+        table: 'shipping_trackings',
+        filter: 'user_id=eq.' + userId,
+      }, () => { void loadStatus() })
+      .subscribe()
+    return () => {
+      active = false
+      void supabase.removeChannel(channel)
+    }
+  }, [loadStatus, refresh, userId])
 
   const shipments = useMemo<DisplayShipment[]>(() => {
     const trackingByKey = new Map(apiStatus.trackings.map(row => [row.product_id + ':' + row.direction, row]))
@@ -274,7 +286,7 @@ export default function ShippingCenter({ products, accessToken }: Props) {
           <h1>Versandzentrale</h1>
           <p>Alle eingehenden und ausgehenden Sendungen an einem Ort – inklusive Status und letzter Paketbewegung.</p>
         </div>
-        <button className="button-secondary shipping-refresh-button" type="button" onClick={() => void refresh()} disabled={syncing || !apiStatus.apiAvailable}>
+        <button className="button-secondary shipping-refresh-button" type="button" onClick={() => void refresh(false, true)} disabled={syncing || !apiStatus.apiAvailable}>
           {syncing ? <LoaderCircle size={15} className="spin"/> : <RefreshCw size={15}/>}
           Aktualisieren
         </button>
@@ -286,7 +298,9 @@ export default function ShippingCenter({ products, accessToken }: Props) {
           <strong>{apiStatus.liveTrackingEnabled ? 'Live-Tracking ist aktiviert' : 'Sendungen werden angezeigt – Live-Tracking noch nicht verbunden'}</strong>
           <span>{apiStatus.liveTrackingEnabled
             ? '17TRACK übermittelt Statusänderungen automatisch. Neue Sendungsnummern werden beim Öffnen dieser Seite registriert.'
-            : 'Deine vorhandenen Sendungsnummern aus Produkten und Gmail werden hier gesammelt. Für echte Paketstatus benötigen wir noch den 17TRACK-API-Schlüssel im Cloudflare Worker.'}</span>
+            : apiStatus.apiAvailable
+              ? 'Die API ist verbunden. Automatische Statusmeldungen benötigen noch die Webhook-Sicherheitskonfiguration; du kannst den Status jederzeit manuell aktualisieren.'
+              : 'Deine vorhandenen Sendungsnummern aus Produkten und Gmail werden hier gesammelt. Für echte Paketstatus benötigen wir noch den 17TRACK-API-Schlüssel im Cloudflare Worker.'}</span>
         </div>
         <span className={'shipping-provider-state ' + (apiStatus.liveTrackingEnabled ? 'is-active' : 'is-pending')}>
           <i/>{apiStatus.liveTrackingEnabled ? 'Verbunden' : 'Einrichtung offen'}

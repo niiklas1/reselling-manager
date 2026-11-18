@@ -4,6 +4,7 @@ import {
   identifyCarrier,
   isSafeTrackingUrl,
   scoreProductMatch,
+  suggestProductMatch,
 } from '../src/lib/gmailShipping.ts'
 
 test('recognizes common German and international carriers', () => {
@@ -23,4 +24,23 @@ test('accepts HTTPS tracking links and rejects unsafe protocols or unrelated lin
 test('requires multiple matching product words for confident auto-assignment', () => {
   assert.ok(scoreProductMatch('Pokémon Hidden Fates Elite Trainer Box', 'Your Pokémon Hidden Fates order has shipped') >= 0.78)
   assert.ok(scoreProductMatch('Pokémon Hidden Fates Elite Trainer Box', 'Your order has shipped') < 0.78)
+})
+
+test('does not auto-assign when multiple inventory units match equally', () => {
+  const products = [
+    { id: 'unit-1', name: 'Pokémon Hidden Fates Elite Trainer Box' },
+    { id: 'unit-2', name: 'Pokémon Hidden Fates Elite Trainer Box' },
+  ]
+  const match = suggestProductMatch(products, 'Your Pokémon Hidden Fates order has shipped')
+  assert.equal(match.productId, '')
+  assert.ok(match.confidence >= 0.78)
+})
+
+test('suggests a product only when its match is clearly stronger', () => {
+  const products = [
+    { id: 'hidden-fates', name: 'Pokémon Hidden Fates Elite Trainer Box' },
+    { id: 'vivid-voltage', name: 'Pokémon Vivid Voltage Elite Trainer Box' },
+  ]
+  const match = suggestProductMatch(products, 'Your Pokémon Hidden Fates order has shipped')
+  assert.equal(match.productId, 'hidden-fates')
 })

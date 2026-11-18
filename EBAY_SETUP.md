@@ -58,7 +58,7 @@ Do not put any of these values in source files, GitHub, or the browser. The Supa
 3. Sign in at eBay and approve the requested read permissions.
 4. Return to the Reselling Manager, select **Jetzt synchronisieren**, and check the imported offers and recent paid orders.
 
-The current implementation synchronizes on demand and has a six-hour Cloudflare Cron schedule. It imports active, ended, and scheduled listings, plus orders returned by the Fulfillment API. The initial order import covers the most recent 90 days. The current listing search reads the first result page for each listing state (up to 50 per state); full pagination is a follow-up improvement.
+The current implementation synchronizes on demand and has a six-hour Cloudflare Cron schedule. It imports active, ended, and scheduled listings, plus orders returned by the Fulfillment API. The initial order import covers the most recent 90 days. The current listing search reads the first result page for each listing state and caps the combined import at 100 offers; full pagination is a follow-up improvement.
 
 Imported eBay listings and orders are stored in dedicated tables and shown in the eBay integration panel. They are not yet automatically converted into inventory products or matched to existing product records. Order imports cover completed checkout; eBay's Fulfillment API does not return checkout orders that are still pending payment.
 

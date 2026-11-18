@@ -133,7 +133,8 @@ export function identifyCarrier(urlOrHost: string): string {
 }
 
 function hasTrackingEndpoint(url: URL): boolean {
-  const path = decodeURIComponent(url.pathname)
+  let path = url.pathname
+  try { path = decodeURIComponent(url.pathname) } catch { /* retain the encoded pathname */ }
   if (TRACKING_ENDPOINT.test(path)) return true
   for (const [key, value] of url.searchParams.entries()) {
     if (TRACKING_ID_PARAMS.has(key.toLowerCase()) && value.trim().length >= 5) return true
@@ -168,7 +169,7 @@ function resemblesUnsafeTrackingHost(rawUrl: string): boolean {
     const url = new URL(rawUrl)
     const host = url.hostname.toLowerCase()
     if (url.protocol !== 'https:' || url.username || url.password || !host || host === 'localhost' || host.endsWith('.local') || host.startsWith('[')) return true
-    if (/^(?:127\\.|10\\.|192\\.168\\.|172\\.(?:1[6-9]|2\\d|3[01])\\.)/.test(host) || /^\\d{1,3}(?:\\.\\d{1,3}){3}$/.test(host)) return true
+    if (/^(?:127\.|10\.|192\.168\.|172\.(?:1[6-9]|2\\d|3[01])\.)/.test(host) || /^\\d{1,3}(?:\.\\d{1,3}){3}$/.test(host)) return true
     return resemblesCarrierSpoof(host)
   } catch {
     return true
@@ -178,12 +179,12 @@ function resemblesUnsafeTrackingHost(rawUrl: string): boolean {
 function unwrapTrackingUrl(rawUrl: string): string {
   try {
     const url = new URL(rawUrl)
-    const wrapperHosts = /^(?:www\\.)?google\\.(?:com|de|co\\.uk)$/i
+    const wrapperHosts = /^(?:www\.)?google\.(?:com|de|co\.uk)$/i
     const redirectKeys = ['url', 'u', 'redirect', 'redirect_url', 'target', 'destination', 'dest', 'to', 'link', 'continue']
     const nested = wrapperHosts.test(url.hostname)
       ? url.searchParams.get('url') || url.searchParams.get('q') || url.searchParams.get('u')
-      : redirectKeys.map(key => url.searchParams.get(key)).find(value => value && /^https:\\/\\//i.test(value)) || ''
-    if (nested && /^https:\\/\\//i.test(nested)) {
+      : redirectKeys.map(key => url.searchParams.get(key)).find(value => value && /^https:\/\//i.test(value)) || ''
+    if (nested && /^https:\/\//i.test(nested)) {
       try {
         const nestedUrl = new URL(nested)
         if (isSafeTrackingUrl(nestedUrl.toString())) return nestedUrl.toString()
@@ -573,13 +574,25 @@ export async function scanGmailForTracking(
   const candidates = messages.flatMap(message => parseMessage(message, products))
     .filter(candidate => !candidate.trackingUrl || !existingUrls.has(canonicalTrackingUrl(candidate.trackingUrl)))
 
-  // The same tracking number is often repeated in order, dispatch and follow-up
-  // messages. Keep only the newest useful message for each physical shipment.
+  const existingNumbers = new Set(products.flatMap(product =>
+    [product.incomingTrackingNumber, product.outgoingTrackingNumber]
+      .filter((value): value is string => Boolean(value))
+      .map(value => value.toUpperCase().replace(/[^A-Z0-9]/g, ''))
+  ))
+  const newCandidates = candidates.filter(candidate =>
+    !candidate.trackingNumber ||
+    !existingNumbers.has(candidate.trackingNumber.toUpperCase().replace(/[^A-Z0-9]/g, ''))
+  )
+
+  // Repeated status emails for a parcel are one shipment. When a retailer
+  // provides only a number, use the message ID rather than an empty URL key.
   const deduplicated = new Map<string, GmailTrackingCandidate>()
-  for (const candidate of candidates) {
+  for (const candidate of newCandidates) {
     const key = candidate.trackingNumber
       ? 'number:' + candidate.trackingNumber.toUpperCase().replace(/[^A-Z0-9]/g, '')
-      : 'url:' + canonicalTrackingUrl(candidate.trackingUrl)
+      : candidate.trackingUrl
+        ? 'url:' + canonicalTrackingUrl(candidate.trackingUrl)
+        : 'message:' + candidate.messageId
     const previous = deduplicated.get(key)
     if (!previous || candidate.date > previous.date) deduplicated.set(key, candidate)
   }
@@ -646,6 +659,13 @@ export function createGmailLearningHint(
 ): GmailLearningHint | null {
   const product = products.find(item => item.id === productId)
   if (!product || !candidate.senderDomain) return null
+  const productIdentity = normalizeText(product.name) + '|' + normalizeText(product.category || '') + '|' + normalizeText(product.platform || '')
+  const equivalentProducts = products.filter(item =>
+    normalizeText(item.name) + '|' + normalizeText(item.category || '') + '|' + normalizeText(item.platform || '') === productIdentity
+  )
+  // Never teach a specific unit from a duplicate stock group: an otherwise
+  // correct subject could later point to the wrong physical copy.
+  if (equivalentProducts.length !== 1) return null
   const tokens = subjectTokens(candidate.subject)
   const productWords = new Set(productTokens(product.name))
   const relevant = tokens.filter(token => productWords.has(token))
@@ -668,8 +688,15 @@ export function applyLearnedGmailMatch(
   if (!candidate.senderDomain) return candidate
   const candidateWords = new Set(subjectTokens(candidate.subject))
   const ranked = hints
-    .filter(hint => hint.senderDomain.toLowerCase() === candidate.senderDomain.toLowerCase() &&
-      hint.direction === candidate.direction && products.some(product => product.id === hint.productId))
+    .filter(hint => {
+      if (hint.senderDomain.toLowerCase() !== candidate.senderDomain.toLowerCase() || hint.direction !== candidate.direction) return false
+      const product = products.find(item => item.id === hint.productId)
+      if (!product) return false
+      const identity = normalizeText(product.name) + '|' + normalizeText(product.category || '') + '|' + normalizeText(product.platform || '')
+      return products.filter(item =>
+        normalizeText(item.name) + '|' + normalizeText(item.category || '') + '|' + normalizeText(item.platform || '') === identity
+      ).length === 1
+    })
     .map(hint => {
       const overlap = hint.subjectTokens.filter(token => candidateWords.has(token))
       const longToken = overlap.some(token => token.length >= 8)

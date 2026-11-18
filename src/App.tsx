@@ -1,4 +1,7 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
+import type { Session } from '@supabase/supabase-js'
+import AuthScreen from './components/AuthScreen'
+import { supabase, CLOUD_RECEIPT_PREFIX, uploadCloudReceipt, downloadCloudReceipt, deleteCloudReceipt } from './lib/supabase'
 import {
   ArrowDownToLine, ArrowUpRight, Bell, Box, ChartNoAxesCombined, ChevronDown,
   CircleHelp, LayoutDashboard, Menu, Package, Plus, Search, Settings,
@@ -139,6 +142,111 @@ function readStoredProducts(): Product[] {
   } catch {
     return []
   }
+}
+
+
+type CloudProductRow = {
+  id: string
+  user_id: string
+  group_id: string | null
+  name: string
+  category: string
+  platform: string
+  purchase_price: number | string
+  sale_price: number | string
+  shipping: number | string
+  fees: number | string
+  purchase_date: string | null
+  sale_date: string | null
+  status: Status
+  quantity: number
+  image_url: string | null
+  image_attribution: string | null
+  image_license: string | null
+  receipt_path: string | null
+  incoming_carrier: string
+  incoming_tracking_number: string
+  incoming_tracking_url: string
+  outgoing_carrier: string
+  outgoing_tracking_number: string
+  outgoing_tracking_url: string
+  created_at?: string
+  updated_at?: string
+}
+
+function productToCloudRow(product: Product, userId: string): CloudProductRow {
+  return {
+    id: product.id,
+    user_id: userId,
+    group_id: product.groupId || product.id,
+    name: product.name,
+    category: product.category,
+    platform: product.platform,
+    purchase_price: product.purchasePrice,
+    sale_price: product.salePrice,
+    shipping: product.shipping,
+    fees: product.fees,
+    purchase_date: product.purchaseDate || null,
+    sale_date: product.saleDate || null,
+    status: product.status,
+    quantity: 1,
+    image_url: product.imageUrl || null,
+    image_attribution: product.imageAttribution || null,
+    image_license: product.imageLicense || null,
+    receipt_path: product.receiptPath || null,
+    incoming_carrier: product.incomingCarrier || '',
+    incoming_tracking_number: product.incomingTrackingNumber || '',
+    incoming_tracking_url: product.incomingTrackingUrl || '',
+    outgoing_carrier: product.outgoingCarrier || '',
+    outgoing_tracking_number: product.outgoingTrackingNumber || '',
+    outgoing_tracking_url: product.outgoingTrackingUrl || '',
+    updated_at: new Date().toISOString(),
+  }
+}
+
+function cloudRowToProduct(row: CloudProductRow): Product {
+  return {
+    id: row.id,
+    groupId: row.group_id || row.id,
+    name: row.name || '',
+    category: normalizeProductCategory(row.category),
+    platform: row.platform || '',
+    purchasePrice: Number(row.purchase_price || 0),
+    salePrice: Number(row.sale_price || 0),
+    shipping: Number(row.shipping || 0),
+    fees: Number(row.fees || 0),
+    purchaseDate: row.purchase_date || '',
+    saleDate: row.sale_date || '',
+    status: row.status === 'Verkauft' ? 'Verkauft' : 'Auf Lager',
+    quantity: Math.max(1, Number(row.quantity || 1)),
+    imageUrl: row.image_url || '',
+    imageAttribution: row.image_attribution || '',
+    imageLicense: row.image_license || '',
+    receiptPath: row.receipt_path || '',
+    incomingCarrier: row.incoming_carrier || '',
+    incomingTrackingNumber: row.incoming_tracking_number || '',
+    incomingTrackingUrl: row.incoming_tracking_url || '',
+    outgoingCarrier: row.outgoing_carrier || '',
+    outgoingTrackingNumber: row.outgoing_tracking_number || '',
+    outgoingTrackingUrl: row.outgoing_tracking_url || '',
+  }
+}
+
+async function readProductReceipt(path: string): Promise<Blob | null> {
+  if (!path) return null
+  if (path.startsWith(CLOUD_RECEIPT_PREFIX)) {
+    return downloadCloudReceipt(path.slice(CLOUD_RECEIPT_PREFIX.length))
+  }
+  return readLocalReceipt(path)
+}
+
+async function deleteProductReceipt(path: string): Promise<void> {
+  if (!path) return
+  if (path.startsWith(CLOUD_RECEIPT_PREFIX)) {
+    await deleteCloudReceipt(path.slice(CLOUD_RECEIPT_PREFIX.length))
+    return
+  }
+  if (path.startsWith('local:')) await deleteLocalReceipt(path)
 }
 
 function openReceiptsDb(): Promise<IDBDatabase> {
@@ -447,7 +555,23 @@ function dataUrlToBlob(dataUrl: string): Blob {
 function App() {
   const [section, setSection] = useState<Section>('Übersicht')
   const [dataError, setDataError] = useState('')
-  const [products, setProducts] = useState<Product[]>(readStoredProducts())
+  const [authSession, setAuthSession] = useState<Session | null>(null)
+  const [authLoading, setAuthLoading] = useState(true)
+  const [authBusy, setAuthBusy] = useState(false)
+  const [authError, setAuthError] = useState('')
+  const [cloudReady, setCloudReady] = useState(false)
+  const [cloudLoadingError, setCloudLoadingError] = useState('')
+  const [cloudSyncError, setCloudSyncError] = useState('')
+  const [cloudSyncState, setCloudSyncState] = useState<'idle' | 'saving' | 'synced' | 'error'>('idle')
+  const [cloudLoadRetry, setCloudLoadRetry] = useState(0)
+  const [products, setProducts] = useState<Product[]>([])
+  const [gmailClientId, setGmailClientId] = useState('')
+  const [gmailLearningHints, setGmailLearningHints] = useState<GmailLearningHint[]>([])
+  const loadedUserIdRef = useRef<string | null>(null)
+  const syncedProductsRef = useRef<Product[]>([])
+  const currentProductsRef = useRef<Product[]>([])
+  const settingsSnapshotRef = useRef('')
+  const syncQueueRef = useRef<Promise<void>>(Promise.resolve())
   const [search, setSearch] = useState('')
   const [filter, setFilter] = useState<'Alle' | Status>('Alle')
   const [categoryFilter, setCategoryFilter] = useState<ProductCategory | 'Alle'>('Alle')
@@ -458,38 +582,266 @@ function App() {
   const [showHelp, setShowHelp] = useState(false)
   const [backupBusy, setBackupBusy] = useState(false)
   const [pendingBackupFile, setPendingBackupFile] = useState<File | null>(null)
-  const [currency, setCurrency] = useState(() => localStorage.getItem('reselling-currency') || 'EUR')
+  const [currency, setCurrency] = useState('EUR')
   const [receiptProduct, setReceiptProduct] = useState<Product | null>(null)
   const [backupMessage, setBackupMessage] = useState('')
   const backupInput = useRef<HTMLInputElement>(null)
-  const [theme, setTheme] = useState<'light' | 'dark'>(() => {
-    const saved = localStorage.getItem('reselling-theme')
-    return saved === 'light' ? 'light' : 'dark'
-  })
+  const [theme, setTheme] = useState<'light' | 'dark'>('dark')
 
   activeCurrency = currency
+
+  const userId = authSession?.user.id || null
+  currentProductsRef.current = products
 
   useEffect(() => {
     void navigator.storage?.persist?.().catch(() => false)
   }, [])
 
   useEffect(() => {
-    localStorage.setItem('reselling-currency', currency)
-    activeCurrency = currency
-  }, [currency])
-
-  useEffect(() => {
     document.documentElement.dataset.theme = theme
-    localStorage.setItem('reselling-theme', theme)
-  }, [theme])
+    activeCurrency = currency
+  }, [currency, theme])
 
   useEffect(() => {
-    try {
-      localStorage.setItem(PRODUCTS_STORAGE_KEY, JSON.stringify(products))
-    } catch {
-      setDataError('Der lokale Speicher ist voll. Entferne große oder nicht mehr benötigte Belege.')
+    let active = true
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (!active) return
+      setAuthSession(session)
+      setAuthLoading(false)
+      setAuthBusy(false)
+      setAuthError('')
+    })
+    void supabase.auth.getSession().then(({ data, error }) => {
+      if (!active) return
+      if (error) setAuthError('Deine Anmeldung konnte nicht wiederhergestellt werden: ' + error.message)
+      setAuthSession(data.session)
+      setAuthLoading(false)
+    }).catch(error => {
+      if (!active) return
+      setAuthError(error instanceof Error ? error.message : 'Anmeldestatus konnte nicht geladen werden.')
+      setAuthLoading(false)
+    })
+    return () => {
+      active = false
+      subscription.unsubscribe()
     }
-  }, [products])
+  }, [])
+
+  async function signInWithGoogle() {
+    setAuthBusy(true)
+    setAuthError('')
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider: 'google',
+      options: {
+        redirectTo: window.location.origin,
+        queryParams: { prompt: 'select_account' },
+      },
+    })
+    if (error) {
+      setAuthError('Die Google-Anmeldung konnte nicht gestartet werden: ' + error.message)
+      setAuthBusy(false)
+    }
+  }
+
+  async function signOut() {
+    setAuthError('')
+    const { error } = await supabase.auth.signOut()
+    if (error) {
+      setDataError('Abmeldung fehlgeschlagen: ' + error.message)
+      return
+    }
+    loadedUserIdRef.current = null
+    syncedProductsRef.current = []
+    setProducts([])
+    setCloudReady(false)
+    setGmailClientId('')
+    setGmailLearningHints([])
+    setCurrency('EUR')
+    setTheme('dark')
+    setSection('Übersicht')
+  }
+
+  useEffect(() => {
+    if (!userId) {
+      loadedUserIdRef.current = null
+      syncedProductsRef.current = []
+      settingsSnapshotRef.current = ''
+      setProducts([])
+      setCloudReady(false)
+      setCloudLoadingError('')
+      setCloudSyncState('idle')
+      return
+    }
+
+    let active = true
+    loadedUserIdRef.current = null
+    setCloudReady(false)
+    setCloudLoadingError('')
+    setCloudSyncError('')
+    setProducts([])
+    syncedProductsRef.current = []
+
+    async function loadAccountData() {
+      const [productsResult, settingsResult] = await Promise.all([
+        supabase.from('products').select('*').eq('user_id', userId).order('created_at', { ascending: false }),
+        supabase.from('user_settings').select('*').eq('user_id', userId).maybeSingle(),
+      ])
+      if (productsResult.error) throw productsResult.error
+      if (settingsResult.error) throw settingsResult.error
+      if (!active) return
+
+      const rows = (productsResult.data || []) as CloudProductRow[]
+      const loadedProducts = rows.map(cloudRowToProduct)
+      const settings = settingsResult.data || {
+        currency: 'EUR',
+        theme: 'dark',
+        gmail_client_id: '',
+        gmail_learning_hints: [],
+      }
+      const loadedHints = Array.isArray(settings.gmail_learning_hints)
+        ? settings.gmail_learning_hints.filter((item: unknown) => {
+            if (!item || typeof item !== 'object') return false
+            const hint = item as GmailLearningHint
+            return typeof hint.senderDomain === 'string' &&
+              typeof hint.productId === 'string' &&
+              (hint.direction === 'incoming' || hint.direction === 'outgoing') &&
+              Array.isArray(hint.subjectTokens) &&
+              typeof hint.approvedAt === 'string'
+          }).slice(0, 100)
+        : []
+
+      syncedProductsRef.current = loadedProducts
+      setProducts(loadedProducts)
+      setCurrency(['EUR', 'USD', 'GBP', 'CHF'].includes(settings.currency) ? settings.currency : 'EUR')
+      setTheme(settings.theme === 'light' ? 'light' : 'dark')
+      setGmailClientId(typeof settings.gmail_client_id === 'string' ? settings.gmail_client_id : '')
+      setGmailLearningHints(loadedHints)
+      settingsSnapshotRef.current = JSON.stringify({
+        currency: ['EUR', 'USD', 'GBP', 'CHF'].includes(settings.currency) ? settings.currency : 'EUR',
+        theme: settings.theme === 'light' ? 'light' : 'dark',
+        gmailClientId: typeof settings.gmail_client_id === 'string' ? settings.gmail_client_id : '',
+        gmailLearningHints: loadedHints,
+      })
+      loadedUserIdRef.current = userId
+      setCloudReady(true)
+      setCloudSyncState('synced')
+      setCloudLoadingError('')
+    }
+
+    void loadAccountData().catch(error => {
+      if (!active) return
+      setCloudLoadingError(error instanceof Error ? error.message : 'Cloud-Daten konnten nicht geladen werden.')
+      setCloudReady(false)
+    })
+
+    return () => { active = false }
+  }, [userId, cloudLoadRetry])
+
+  useEffect(() => {
+    if (!userId || !cloudReady || loadedUserIdRef.current !== userId) return
+    const snapshot = products
+    const timer = window.setTimeout(() => {
+      syncQueueRef.current = syncQueueRef.current.catch(() => undefined).then(async () => {
+        if (loadedUserIdRef.current !== userId) return
+        const previous = syncedProductsRef.current
+        const previousById = new Map(previous.map(item => [item.id, item]))
+        const nextById = new Map(snapshot.map(item => [item.id, item]))
+        const changed = snapshot.filter(item => JSON.stringify(previousById.get(item.id)) !== JSON.stringify(item))
+        const removed = previous.filter(item => !nextById.has(item.id)).map(item => item.id)
+        if (!changed.length && !removed.length) return
+
+        setCloudSyncState('saving')
+        setCloudSyncError('')
+        try {
+          for (let index = 0; index < changed.length; index += 100) {
+            const batch = changed.slice(index, index + 100).map(item => productToCloudRow(item, userId))
+            const { error } = await supabase.from('products').upsert(batch, { onConflict: 'id' })
+            if (error) throw error
+          }
+          if (removed.length) {
+            const { error } = await supabase.from('products').delete().eq('user_id', userId).in('id', removed)
+            if (error) throw error
+          }
+          syncedProductsRef.current = snapshot
+          setCloudSyncState('synced')
+          setCloudSyncError('')
+        } catch (error) {
+          setCloudSyncState('error')
+          setCloudSyncError(error instanceof Error ? error.message : 'Änderungen konnten nicht synchronisiert werden.')
+        }
+      })
+    }, 350)
+    return () => window.clearTimeout(timer)
+  }, [products, userId, cloudReady, cloudLoadRetry])
+
+  useEffect(() => {
+    if (!userId || !cloudReady || loadedUserIdRef.current !== userId) return
+    const settings = { currency, theme, gmailClientId: gmailClientId.trim(), gmailLearningHints }
+    const serialized = JSON.stringify(settings)
+    if (serialized === settingsSnapshotRef.current) return
+    const timer = window.setTimeout(() => {
+      syncQueueRef.current = syncQueueRef.current.catch(() => undefined).then(async () => {
+        if (loadedUserIdRef.current !== userId) return
+        const { error } = await supabase.from('user_settings').upsert({
+          user_id: userId,
+          currency,
+          theme,
+          gmail_client_id: gmailClientId.trim(),
+          gmail_learning_hints: gmailLearningHints,
+          updated_at: new Date().toISOString(),
+        }, { onConflict: 'user_id' })
+        if (error) {
+          setCloudSyncState('error')
+          setCloudSyncError('Einstellungen konnten nicht synchronisiert werden: ' + error.message)
+          return
+        }
+        settingsSnapshotRef.current = serialized
+        setCloudSyncState('synced')
+        setCloudSyncError('')
+      })
+    }, 350)
+    return () => window.clearTimeout(timer)
+  }, [currency, theme, gmailClientId, gmailLearningHints, userId, cloudReady, cloudLoadRetry])
+
+  useEffect(() => {
+    if (!userId || !cloudReady || loadedUserIdRef.current !== userId) return
+    let active = true
+    const refreshProducts = async () => {
+      // Do not overwrite edits which are still waiting to be sent from this device.
+      if (JSON.stringify(currentProductsRef.current) !== JSON.stringify(syncedProductsRef.current)) return
+      const { data, error } = await supabase.from('products').select('*').eq('user_id', userId).order('created_at', { ascending: false })
+      if (!active || error) return
+      const refreshed = ((data || []) as CloudProductRow[]).map(cloudRowToProduct)
+      syncedProductsRef.current = refreshed
+      setProducts(refreshed)
+    }
+    const channel = supabase.channel('reselling-products-' + userId)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'products', filter: 'user_id=eq.' + userId }, () => { void refreshProducts() })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'user_settings', filter: 'user_id=eq.' + userId }, async () => {
+        const { data, error } = await supabase.from('user_settings').select('*').eq('user_id', userId).maybeSingle()
+        if (!active || error || !data) return
+        const hints = Array.isArray(data.gmail_learning_hints) ? data.gmail_learning_hints as GmailLearningHint[] : []
+        const nextSettings = {
+          currency: ['EUR', 'USD', 'GBP', 'CHF'].includes(data.currency) ? data.currency : 'EUR',
+          theme: data.theme === 'light' ? 'light' : 'dark',
+          gmailClientId: data.gmail_client_id || '',
+          gmailLearningHints: hints,
+        }
+        if (JSON.stringify(nextSettings) !== settingsSnapshotRef.current) {
+          settingsSnapshotRef.current = JSON.stringify(nextSettings)
+          setCurrency(nextSettings.currency)
+          setTheme(nextSettings.theme)
+          setGmailClientId(nextSettings.gmailClientId)
+          setGmailLearningHints(nextSettings.gmailLearningHints)
+        }
+      })
+      .subscribe()
+    return () => {
+      active = false
+      void supabase.removeChannel(channel)
+    }
+  }, [userId, cloudReady])
+
 
 
 
@@ -497,7 +849,15 @@ function App() {
     setBackupBusy(true)
     setBackupMessage('')
     try {
-      const receipts = await readAllLocalReceipts()
+      if (!userId || loadedUserIdRef.current !== userId) throw new Error('Du musst angemeldet sein, um ein vollständiges Cloud-Backup zu erstellen.')
+      const uniqueReceiptPaths = [...new Set(products.map(product => product.receiptPath).filter(Boolean))]
+      const receipts: LocalReceiptRecord[] = []
+      for (const [index, path] of uniqueReceiptPaths.entries()) {
+        const blob = await readProductReceipt(path)
+        if (!blob) throw new Error('Ein Originalbeleg konnte nicht geladen werden. Das Backup wurde nicht erstellt, damit keine Daten fehlen.')
+        const fileName = path.split('/').pop()?.replace(/^[^-]+-/, '') || ('beleg-' + (index + 1))
+        receipts.push({ id: path, blob, name: fileName, lastModified: Date.now() })
+      }
       const entries: ZipEntry[] = []
       const archivePathById = new Map<string, string>()
       const receiptManifest: BackupReceiptV3[] = []
@@ -513,20 +873,19 @@ function App() {
 
       const backupProducts = products.map(product => {
         if (!product.receiptPath) return { ...product }
-        if (!product.receiptPath.startsWith('local:')) throw new Error('Ein Produkt verweist auf einen unbekannten Belegspeicher. Das Backup wurde nicht erstellt, damit keine Daten fehlen.')
-        const archivePath = archivePathById.get(product.receiptPath.slice(6))
-        if (!archivePath) throw new Error('Ein zugeordneteter Originalbeleg fehlt. Das Backup wurde nicht erstellt, damit es vollständig bleibt.')
+        const archivePath = archivePathById.get(product.receiptPath)
+        if (!archivePath) throw new Error('Ein zugeordneter Originalbeleg fehlt. Das Backup wurde nicht erstellt, damit es vollständig bleibt.')
         return { ...product, receiptPath: 'backup:' + archivePath }
       })
 
-      const storedValues: Record<string, string> = {}
-      for (let index = 0; index < localStorage.length; index++) {
-        const key = localStorage.key(index)
-        if (key) storedValues[key] = localStorage.getItem(key) ?? ''
+      // Never put Supabase access/refresh tokens into a portable backup file.
+      const storedValues: Record<string, string> = {
+        [PRODUCTS_STORAGE_KEY]: JSON.stringify(backupProducts),
+        'reselling-currency': currency,
+        'reselling-theme': theme,
+        'reselling-gmail-client-id': gmailClientId,
+        'reselling-gmail-learning-v1': JSON.stringify(gmailLearningHints),
       }
-      storedValues[PRODUCTS_STORAGE_KEY] = JSON.stringify(backupProducts)
-      storedValues['reselling-currency'] = currency
-      storedValues['reselling-theme'] = theme
 
       const manifest: ResellingBackupV3 = {
         format: 'reselling-manager-backup',
@@ -655,11 +1014,11 @@ function App() {
       if (!restoredProducts.every(product => product && typeof product.id === 'string' && typeof product.name === 'string')) throw new Error('Das Backup enthält ungültige Produktdaten.')
       if (!window.confirm('Das Backup ersetzt alle aktuell gespeicherten Produkte, Einstellungen und Originalbelege. Möchtest du fortfahren?')) return
 
+      if (!userId || loadedUserIdRef.current !== userId) throw new Error('Du musst angemeldet sein, um ein Backup wiederherzustellen.')
       const newPaths: Record<string, string> = {}
       for (const [archivePath, receipt] of Object.entries(receiptFiles)) {
-        const fileOptions: FilePropertyBag = { type: receipt.type }
-        if (typeof receipt.lastModified === 'number' && Number.isFinite(receipt.lastModified)) fileOptions.lastModified = receipt.lastModified
-        const path = await saveLocalReceipt(new File([receipt.bytes], receipt.name, fileOptions))
+        const fileOptions: FilePropertyBag = { type: receipt.type, lastModified: typeof receipt.lastModified === 'number' ? receipt.lastModified : Date.now() }
+        const path = await uploadCloudReceipt(userId, new File([receipt.bytes], receipt.name, fileOptions))
         createdPaths.push(path)
         newPaths[archivePath] = path
       }
@@ -672,37 +1031,26 @@ function App() {
         return { ...product, receiptPath: newPaths[key] || '' }
       }))
 
-      const previousStorage: Record<string, string> = {}
-      for (let index = 0; index < localStorage.length; index++) {
-        const key = localStorage.key(index)
-        if (key) previousStorage[key] = localStorage.getItem(key) ?? ''
-      }
-      try {
-        if (storageSnapshot) {
-          const nextStorage = { ...storageSnapshot, [PRODUCTS_STORAGE_KEY]: JSON.stringify(finalProducts) }
-          localStorage.clear()
-          for (const [key, value] of Object.entries(nextStorage)) localStorage.setItem(key, value)
-        } else {
-          localStorage.setItem(PRODUCTS_STORAGE_KEY, JSON.stringify(finalProducts))
-        }
-      } catch (storageError) {
-        localStorage.clear()
-        for (const [key, value] of Object.entries(previousStorage)) localStorage.setItem(key, value)
-        throw storageError
-      }
-
+      // Restore only the app's own preferences. Never clear localStorage here:
+      // Supabase's PKCE session must survive a successful restore.
       if (storageSnapshot) {
         const restoredCurrency = storageSnapshot['reselling-currency']
         const restoredTheme = storageSnapshot['reselling-theme']
         if (restoredCurrency && ['EUR', 'USD', 'GBP', 'CHF'].includes(restoredCurrency)) setCurrency(restoredCurrency)
         if (restoredTheme === 'light' || restoredTheme === 'dark') setTheme(restoredTheme)
+        setGmailClientId(storageSnapshot['reselling-gmail-client-id'] || '')
+        try {
+          const restoredHints = JSON.parse(storageSnapshot['reselling-gmail-learning-v1'] || '[]')
+          setGmailLearningHints(Array.isArray(restoredHints) ? restoredHints : [])
+        } catch {
+          setGmailLearningHints([])
+        }
       }
       setProducts(finalProducts)
       restoreCommitted = true
-      await removeLocalReceiptsExcept(createdPaths.map(path => path.slice(6))).catch(() => undefined)
-      setBackupMessage('Wiederherstellung erfolgreich: ' + finalProducts.length + ' Produkte und ' + Object.keys(newPaths).length + ' Originalbelege importiert. Einstellungen wurden ebenfalls übernommen.')
+      setBackupMessage('Wiederherstellung erfolgreich: ' + finalProducts.length + ' Produkte und ' + Object.keys(newPaths).length + ' Originalbelege in dein Cloud-Konto importiert.')
     } catch (error) {
-      if (!restoreCommitted) await Promise.all(createdPaths.map(path => deleteLocalReceipt(path).catch(() => undefined)))
+      if (!restoreCommitted) await Promise.all(createdPaths.map(path => deleteProductReceipt(path).catch(() => undefined)))
       setBackupMessage(error instanceof Error ? error.message : 'Backup konnte nicht wiederhergestellt werden.')
     } finally {
       setBackupBusy(false)
@@ -731,9 +1079,10 @@ function App() {
     let receiptPath = batch[0].receiptPath || ''
 
     try {
-      if (invoiceFile) receiptPath = await saveLocalReceipt(invoiceFile)
+      if (!userId) throw new Error('Deine Sitzung ist abgelaufen. Bitte melde dich erneut an.')
+      if (invoiceFile) receiptPath = await uploadCloudReceipt(userId, invoiceFile)
     } catch (error) {
-      setDataError(error instanceof Error ? error.message : 'Der Beleg konnte nicht lokal gespeichert werden.')
+      setDataError(error instanceof Error ? error.message : 'Der Beleg konnte nicht in der Cloud gespeichert werden.')
       return false
     }
 
@@ -744,7 +1093,7 @@ function App() {
 
     if (previousReceiptPath && previousReceiptPath !== receiptPath &&
         !products.some(product => product.id !== editing?.id && product.receiptPath === previousReceiptPath)) {
-      try { await deleteLocalReceipt(previousReceiptPath) } catch { /* Product data remains saved locally. */ }
+      try { await deleteProductReceipt(previousReceiptPath) } catch { setDataError('Produkt gespeichert, der alte Originalbeleg konnte aber nicht entfernt werden.') }
     }
     setShowForm(false)
     setEditing(null)
@@ -764,7 +1113,7 @@ function App() {
     const productToDelete = products.find(product => product.id === id)
     setProducts(current => current.filter(p => p.id !== id))
     if (productToDelete?.receiptPath && !products.some(product => product.id !== id && product.receiptPath === productToDelete.receiptPath)) {
-      try { await deleteLocalReceipt(productToDelete.receiptPath) } catch { setDataError('Produkt gelöscht, der zugehörige Beleg konnte aber nicht entfernt werden.') }
+      try { await deleteProductReceipt(productToDelete.receiptPath) } catch { setDataError('Produkt gelöscht, der zugehörige Beleg konnte aber nicht entfernt werden.') }
     }
   }
   function openNew() { setEditing(null); setShowForm(true) }
@@ -795,6 +1144,18 @@ function App() {
     { label: 'Auswertungen', icon: ChartNoAxesCombined },
   ]
 
+  if (authLoading) {
+    return <main className="auth-screen"><section className="auth-card auth-loading-card"><LoaderCircle size={28} className="spin"/><p>Anmeldestatus wird geprüft …</p></section></main>
+  }
+  if (!authSession) {
+    return <AuthScreen busy={authBusy} error={authError} onGoogleSignIn={() => void signInWithGoogle()}/>
+  }
+  if (!cloudReady) {
+    return <main className="auth-screen"><section className="auth-card auth-loading-card">
+      {cloudLoadingError ? <><h1>Cloud-Daten konnten nicht geladen werden.</h1><p className="auth-description">{cloudLoadingError}</p><button className="auth-google-button" onClick={() => setCloudLoadRetry(value => value + 1)}>Erneut versuchen</button><button className="auth-secondary-button" onClick={() => void signOut()}>Abmelden</button></> : <><LoaderCircle size={28} className="spin"/><p>Dein persönlicher Workspace wird geladen …</p></>}
+    </section></main>
+  }
+
   return (
     <div className="app-shell">
       <aside className={mobileNav ? 'sidebar sidebar-open' : 'sidebar'}>
@@ -809,7 +1170,11 @@ function App() {
         </nav>
         <div className="sidebar-spacer"/>
         <button className={section === 'Einstellungen' ? 'nav-link selected' : 'nav-link'} onClick={() => setSection('Einstellungen')}><Settings size={18}/><span>Einstellungen</span></button>
-        <button className="profile-card" onClick={() => { setSection(current => current === 'Einstellungen' ? 'Übersicht' : 'Einstellungen'); setMobileNav(false) }} title="Einstellungen öffnen oder schließen"><div className="profile-avatar">N</div><div className="profile-copy"><strong>Mein Workspace</strong><span>Lokales Gerät</span></div><ChevronDown size={15} className="profile-chevron"/></button>
+        <button className="profile-card" onClick={() => { setSection(current => current === 'Einstellungen' ? 'Übersicht' : 'Einstellungen'); setMobileNav(false) }} title="Kontoeinstellungen öffnen oder schließen">
+          <div className="profile-avatar">{(authSession?.user.user_metadata?.full_name || authSession?.user.email || 'R').toString().slice(0, 1).toUpperCase()}</div>
+          <div className="profile-copy"><strong>{authSession?.user.user_metadata?.full_name || 'Mein Konto'}</strong><span>{authSession?.user.email}</span></div>
+          <ChevronDown size={15} className="profile-chevron"/>
+        </button>
         <div className="sidebar-foot">RESSELLMANAGER <span>·</span> V 0.1</div>
       </aside>
 
@@ -819,11 +1184,12 @@ function App() {
         <header className="topbar">
           <button className="mobile-menu" onClick={() => setMobileNav(true)}><Menu size={20}/></button>
           <div className="breadcrumbs"><span>Workspace</span><b>/</b><strong>{section}</strong></div>
-          <div className="topbar-right"><span className="local-status"><i/> Nur dieses Gerät</span><button className="top-icon" aria-label="Hilfe" title="Hilfe" onClick={() => setShowHelp(true)}><CircleHelp size={18}/></button><button className="theme-toggle" aria-label={theme === 'dark' ? 'Helles Design aktivieren' : 'Dark Mode aktivieren'} title={theme === 'dark' ? 'Helles Design' : 'Dark Mode'} onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}>{theme === 'dark' ? <Sun size={16}/> : <Moon size={16}/>}</button><button className="top-avatar top-avatar-button" onClick={() => setSection(current => current === 'Einstellungen' ? 'Übersicht' : 'Einstellungen')} title="Einstellungen öffnen oder schließen" aria-expanded={section === 'Einstellungen'}>N</button></div>
+          <div className="topbar-right"><span className={'local-status ' + (cloudSyncState === 'error' ? 'cloud-error-status' : '')}><i/>{cloudSyncState === 'saving' ? 'Synchronisiert …' : cloudSyncState === 'error' ? 'Sync-Fehler' : 'Cloud synchronisiert'}</span><button className="top-icon" aria-label="Hilfe" title="Hilfe" onClick={() => setShowHelp(true)}><CircleHelp size={18}/></button><button className="theme-toggle" aria-label={theme === 'dark' ? 'Helles Design aktivieren' : 'Dark Mode aktivieren'} title={theme === 'dark' ? 'Helles Design' : 'Dark Mode'} onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}>{theme === 'dark' ? <Sun size={16}/> : <Moon size={16}/>}</button><button className="top-avatar top-avatar-button" onClick={() => setSection(current => current === 'Einstellungen' ? 'Übersicht' : 'Einstellungen')} title="Einstellungen öffnen oder schließen" aria-expanded={section === 'Einstellungen'}>N</button></div>
         </header>
 
         <div className="page-wrap">
           {dataError && <div className="app-alert error" role="alert">{dataError}</div>}
+          {cloudSyncError && <div className="app-alert error" role="alert">Cloud-Synchronisierung fehlgeschlagen: {cloudSyncError} <button type="button" onClick={() => { setCloudSyncError(''); setCloudLoadRetry(value => value + 1) }}>Erneut versuchen</button></div>}
           {section === 'Übersicht' && (
             <>
               <div className="page-header"><div><div className="overline">DEIN BUSINESS AUF EINEN BLICK</div><h1>Übersicht</h1><p>Willkommen zurück. Hier ist dein aktueller Überblick.</p></div><button className="button-primary" onClick={openNew}><Plus size={17}/> Produkt hinzufügen</button></div>
@@ -865,7 +1231,28 @@ function App() {
           )}
 
           {section === 'Auswertungen' && <section className="panel coming-panel"><div className="coming-icon"><Sparkles size={23}/></div><h2>Auswertungen</h2><p>Hier bauen wir deine Monatsübersichten, Gewinnentwicklung und Plattformvergleiche auf.</p><span className="coming-tag">WIRD ALS NÄCHSTES ERWEITERT</span></section>}
-          {section === 'Einstellungen' && <section className="panel settings-panel"><div className="panel-title-row"><div><h2>Lokaler Workspace</h2><p>Die App läuft ohne Konto, Anmeldung oder E-Mail-Versand.</p></div></div><GmailShippingPanel products={products} onApply={applyGmailTracking}/><div className="setting-row"><div><strong>Betriebsmodus</strong><span>Persönliche Nutzung auf diesem Gerät.</span></div><span className="setting-pill">Ohne Login</span></div><div className="setting-row"><div><strong>Erscheinungsbild</strong><span>Zwischen dem dunklen Neon-Look und dem hellen Design wechseln.</span></div><button className="setting-toggle" onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}>{theme === 'dark' ? <Sun size={15}/> : <Moon size={15}/>} {theme === 'dark' ? 'Helles Design' : 'Dark Mode'}</button></div><div className="setting-row"><div><strong>Datenspeicherung</strong><span>Produkte werden nur in diesem Browser gespeichert. Es gibt keine Cloud-Synchronisierung.</span></div><span className="setting-pill">Lokal</span></div><div className="setting-row"><div><strong>Belege</strong><span>PDFs und Bilder werden im lokalen Browserspeicher dieses Geräts abgelegt.</span></div><span className="setting-pill">Auf diesem Gerät</span></div><div className="backup-section"><div className="backup-heading"><div><strong>Vollständiges PDF-Backup</strong><span>Sichere Produkte, Website-Einstellungen und sämtliche gespeicherten Originalbelege in einer einzigen PDF-Datei. Die Wiederherstellungsdaten sind in der PDF eingebettet.</span></div><HardDrive size={20}/></div><div className="backup-actions"><button className="button-primary" onClick={() => void createBackup()} disabled={backupBusy}><ArrowDownToLine size={15}/>{backupBusy ? 'PDF wird erstellt …' : 'PDF-Backup erstellen'}</button><button className="button-secondary" onClick={() => backupInput.current?.click()} disabled={backupBusy}><FileUp size={15}/> PDF / Backup importieren</button><input ref={backupInput} type="file" accept=".pdf,application/pdf,.zip,application/zip,.json,application/json,application/octet-stream" hidden onChange={e => void restoreBackup(e.target.files?.[0])}/></div>{pendingBackupFile && <div className="backup-actions"><button className="button-primary" onClick={() => void shareBackupFile()}><ArrowUpRight size={15}/> PDF in Dateien sichern / teilen</button><button className="button-secondary" onClick={downloadBackupFile}><ArrowDownToLine size={15}/> PDF herunterladen</button></div>}{backupMessage && <p className="backup-message" role="status">{backupMessage}</p>}<small>Auf dem iPhone im Teilen-Menü „In Dateien sichern“ wählen. Beim Wiederherstellen die unveränderte PDF auswählen. Ältere ZIP- und JSON-Backups bleiben ebenfalls importierbar.</small></div><div className="setting-row"><div><strong>Währung</strong><span>Wähle die Währung, in der Beträge angezeigt werden. Zahlenwerte werden dabei nicht umgerechnet.</span></div><select className="currency-select" value={currency} onChange={e => setCurrency(e.target.value)} aria-label="Anzeigewährung"><option value="EUR">Euro (€)</option><option value="USD">US-Dollar ($)</option><option value="GBP">Britisches Pfund (£)</option><option value="CHF">Schweizer Franken (CHF)</option></select></div><div className="setting-row"><div><strong>App-Version</strong><span>Reselling Manager – Invoice Studio</span></div><span className="setting-pill">0.3.0 Local</span></div></section>}
+          {section === 'Einstellungen' && <section className="panel settings-panel">
+            <div className="panel-title-row"><div><h2>Dein Konto</h2><p>Deine Daten werden privat gespeichert und mit deinen Geräten synchronisiert.</p></div></div>
+            <div className="setting-row"><div><strong>Angemeldet als</strong><span>{authSession?.user.email}</span></div><span className="setting-pill">Google-Konto</span></div>
+            <GmailShippingPanel
+              key={userId || 'signed-out'}
+              products={products}
+              onApply={applyGmailTracking}
+              initialClientId={gmailClientId}
+              initialLearningHints={gmailLearningHints}
+              onSettingsChange={({ clientId, learningHints }) => {
+                setGmailClientId(current => current === clientId ? current : clientId)
+                setGmailLearningHints(current => JSON.stringify(current) === JSON.stringify(learningHints) ? current : learningHints)
+              }}
+            />
+            <div className="setting-row"><div><strong>Cloud-Synchronisierung</strong><span>{cloudSyncState === 'saving' ? 'Änderungen werden sicher in deinem Konto gespeichert.' : cloudSyncState === 'error' ? 'Die letzte Synchronisierung ist fehlgeschlagen. Bitte Verbindung prüfen und erneut versuchen.' : 'Produkte, Verkäufe und Einstellungen sind auf allen angemeldeten Geräten verfügbar.'}</span></div><span className="setting-pill">{cloudSyncState === 'saving' ? 'Speichert …' : cloudSyncState === 'error' ? 'Fehler' : 'Aktiv'}</span></div>
+            <div className="setting-row"><div><strong>Belege</strong><span>Original-PDFs und Bilder liegen in deinem privaten Cloud-Speicher. Zugriff haben nur du und deine Sitzung.</span></div><span className="setting-pill">Privat</span></div>
+            <div className="backup-section"><div className="backup-heading"><div><strong>Vollständiges PDF-Backup</strong><span>Sichere Produkte, Einstellungen und sämtliche Originalbelege in einer einzigen PDF-Datei. Die Wiederherstellungsdaten sind in der PDF eingebettet.</span></div><HardDrive size={20}/></div><div className="backup-actions"><button className="button-primary" onClick={() => void createBackup()} disabled={backupBusy}><ArrowDownToLine size={15}/>{backupBusy ? 'PDF wird erstellt …' : 'PDF-Backup erstellen'}</button><button className="button-secondary" onClick={() => backupInput.current?.click()} disabled={backupBusy}><FileUp size={15}/> PDF / Backup importieren</button><input ref={backupInput} type="file" accept=".pdf,application/pdf,.zip,application/zip,.json,application/json,application/octet-stream" hidden onChange={e => void restoreBackup(e.target.files?.[0])}/></div>{pendingBackupFile && <div className="backup-actions"><button className="button-primary" onClick={() => void shareBackupFile()}><ArrowUpRight size={15}/> PDF in Dateien sichern / teilen</button><button className="button-secondary" onClick={downloadBackupFile}><ArrowDownToLine size={15}/> PDF herunterladen</button></div>}{backupMessage && <p className="backup-message" role="status">{backupMessage}</p>}<small>Beim Wiederherstellen werden die Produkte und Belege in dein angemeldetes Konto importiert. Das PDF-Backup bleibt zusätzlich eine unabhängige Sicherung.</small></div>
+            <div className="setting-row"><div><strong>Währung</strong><span>Wähle die Währung, in der Beträge angezeigt werden. Zahlenwerte werden dabei nicht umgerechnet.</span></div><select className="currency-select" value={currency} onChange={e => setCurrency(e.target.value)} aria-label="Anzeigewährung"><option value="EUR">Euro (€)</option><option value="USD">US-Dollar ($)</option><option value="GBP">Britisches Pfund (£)</option><option value="CHF">Schweizer Franken (CHF)</option></select></div>
+            <div className="setting-row"><div><strong>Erscheinungsbild</strong><span>Zwischen dem dunklen Neon-Look und dem hellen Design wechseln.</span></div><button className="setting-toggle" onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}>{theme === 'dark' ? <Sun size={15}/> : <Moon size={15}/>} {theme === 'dark' ? 'Helles Design' : 'Dark Mode'}</button></div>
+            <div className="setting-row"><div><strong>Abmelden</strong><span>Deine Cloud-Daten bleiben erhalten. Auf diesem Gerät wird deine Sitzung beendet.</span></div><button className="button-ghost" onClick={() => void signOut()}>Aus Google-Konto abmelden</button></div>
+            <div className="setting-row"><div><strong>App-Version</strong><span>Reselling Manager – Cloud Edition</span></div><span className="setting-pill">0.4.0</span></div>
+          </section>}
           <footer className="page-footer">Reselling Manager <span>·</span> Einfach den Überblick behalten.</footer>
         </div>
       </main>
@@ -976,14 +1363,14 @@ function ReceiptModal({ product, onClose }: { product: Product; onClose: () => v
   const [error, setError] = useState('')
   useEffect(() => {
     let activeUrl = ''
-    readLocalReceipt(product.receiptPath).then(blob => {
-      if (!blob) { setError('Der lokal gespeicherte Beleg wurde nicht gefunden.'); return }
+    readProductReceipt(product.receiptPath).then(blob => {
+      if (!blob) { setError('Der gespeicherte Beleg wurde nicht gefunden.'); return }
       activeUrl = URL.createObjectURL(blob)
       setUrl(activeUrl)
     }).catch(() => setError('Der Beleg konnte nicht geöffnet werden.'))
     return () => { if (activeUrl) URL.revokeObjectURL(activeUrl) }
   }, [product.receiptPath])
-  return <div className="modal-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) onClose() }}><section className="modal-card receipt-modal"><div className="modal-header"><div><span className="overline">ORIGINALBELEG</span><h2>{product.name}</h2><p>Der Beleg wird direkt aus dem lokalen Gerätespeicher geladen.</p></div><button className="modal-close" onClick={onClose}><X size={19}/></button></div>{error ? <p className="receipt-error">{error}</p> : url ? <iframe className="receipt-frame" src={url} title={'Beleg für ' + product.name}/> : <div className="receipt-loading"><LoaderCircle className="spin" size={20}/> Beleg wird geöffnet …</div>}<div className="modal-actions"><button className="button-ghost" onClick={onClose}>Schließen</button>{url && <a className="button-primary receipt-download" href={url} target="_blank" rel="noreferrer">In neuem Tab öffnen <ExternalLink size={14}/></a>}</div></section></div>
+  return <div className="modal-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) onClose() }}><section className="modal-card receipt-modal"><div className="modal-header"><div><span className="overline">ORIGINALBELEG</span><h2>{product.name}</h2><p>Der Beleg wird sicher aus deinem privaten Cloud-Speicher geladen.</p></div><button className="modal-close" onClick={onClose}><X size={19}/></button></div>{error ? <p className="receipt-error">{error}</p> : url ? <iframe className="receipt-frame" src={url} title={'Beleg für ' + product.name}/> : <div className="receipt-loading"><LoaderCircle className="spin" size={20}/> Beleg wird geöffnet …</div>}<div className="modal-actions"><button className="button-ghost" onClick={onClose}>Schließen</button>{url && <a className="button-primary receipt-download" href={url} target="_blank" rel="noreferrer">In neuem Tab öffnen <ExternalLink size={14}/></a>}</div></section></div>
 }
 
 
@@ -1074,7 +1461,7 @@ function ProductModal({ product, onClose, onSave }: {
   useEffect(() => {
     let objectUrl = ''
     if (!receiptPath) { setReceiptUrl(''); return }
-    readLocalReceipt(receiptPath).then(file => {
+    readProductReceipt(receiptPath).then(file => {
       if (!file) return
       objectUrl = URL.createObjectURL(file)
       setReceiptUrl(objectUrl)
@@ -1374,24 +1761,18 @@ type GoogleIdentity = {
   }
 }
 
-function GmailShippingPanel({ products, onApply }: {
+function GmailShippingPanel({ products, onApply, initialClientId, initialLearningHints, onSettingsChange }: {
   products: Product[]
   onApply: (payload: { productId: string; direction: ShippingDirection; carrier: string; trackingNumber: string; trackingUrl: string }) => boolean
+  initialClientId: string
+  initialLearningHints: GmailLearningHint[]
+  onSettingsChange: (values: { clientId: string; learningHints: GmailLearningHint[] }) => void
 }) {
-  const [clientId, setClientId] = useState(() => localStorage.getItem('reselling-gmail-client-id') || '')
+  const [clientId, setClientId] = useState(initialClientId)
   const [accessToken, setAccessToken] = useState('')
   const [aiMatching, setAiMatching] = useState(false)
   const [candidates, setCandidates] = useState<GmailTrackingCandidate[]>([])
-  const [learningHints, setLearningHints] = useState<GmailLearningHint[]>(() => {
-    try {
-      const stored = JSON.parse(localStorage.getItem('reselling-gmail-learning-v1') || '[]')
-      return Array.isArray(stored) ? stored.filter((item: GmailLearningHint) =>
-        typeof item?.senderDomain === 'string' && typeof item?.productId === 'string' &&
-        (item.direction === 'incoming' || item.direction === 'outgoing') &&
-        Array.isArray(item.subjectTokens) && typeof item.approvedAt === 'string'
-      ).slice(0, 100) : []
-    } catch { return [] }
-  })
+  const [learningHints, setLearningHints] = useState<GmailLearningHint[]>(initialLearningHints)
   const [days, setDays] = useState('180')
   const [ready, setReady] = useState(false)
   const [scanning, setScanning] = useState(false)
@@ -1400,12 +1781,13 @@ function GmailShippingPanel({ products, onApply }: {
   const tokenClient = useRef<GoogleTokenClient | null>(null)
 
   useEffect(() => {
-    localStorage.setItem('reselling-gmail-client-id', clientId.trim())
-  }, [clientId])
+    setClientId(initialClientId)
+    setLearningHints(initialLearningHints)
+  }, [initialClientId, initialLearningHints])
 
   useEffect(() => {
-    try { localStorage.setItem('reselling-gmail-learning-v1', JSON.stringify(learningHints)) } catch { /* local learning is optional */ }
-  }, [learningHints])
+    onSettingsChange({ clientId: clientId.trim(), learningHints })
+  }, [clientId, learningHints, onSettingsChange])
 
   useEffect(() => {
     const existing = document.querySelector<HTMLScriptElement>('script[data-google-identity]')
@@ -1590,7 +1972,7 @@ function HelpModal({ onClose }: { onClose: () => void }) {
       <div className="help-item"><span><FileUp size={18}/></span><div><strong>Rechnung intelligent erfassen</strong><p>Die lokale Florence-2-KI liest Text und Tabellenpositionen im Browser aus. Positionen werden anhand von Tabellenstruktur und Summen geprüft. Unsichere Treffer musst du vor dem Speichern auswählen. Falls die KI auf dem Gerät nicht läuft, springt die normale Browser-Texterkennung ein. Beim ersten Einsatz wird das KI-Modell einmalig aus dem Internet geladen (mehrere hundert MB).</p></div></div>
       <div className="help-item"><span><ImagePlus size={18}/></span><div><strong>Produktbilder</strong><p>Nach der Rechnungserkennung wird automatisch das bestplatzierte kommerziell nutzbare Bild von Openverse ausgewählt. Über „Bild ändern“ kannst du andere Bilder ansehen. Google Bilder öffnet eine separate Suche; deren erstes Ergebnis kann die App nicht automatisch auslesen.</p></div></div>
       <div className="help-item"><span><Moon size={18}/></span><div><strong>Dark Mode</strong><p>Über das Mond-/Sonnensymbol oben kannst du jederzeit zwischen dunklem und hellem Erscheinungsbild wechseln.</p></div></div>
-      <div className="help-item"><span><HardDrive size={18}/></span><div><strong>Lokale Daten</strong><p>Produkte und Originalbelege bleiben im Speicher dieses Browsers auf diesem Gerät. Es gibt keine Anmeldung, keine Cloud-Synchronisierung und keine automatische Sicherung. Für die Bildsuche wird nur der erkannte Produktname an Openverse übermittelt.</p></div></div>
+      <div className="help-item"><span><HardDrive size={18}/></span><div><strong>Cloud-Daten</strong><p>Deine Produkte, Einstellungen und Originalbelege werden deinem Konto zugeordnet und zwischen deinen Geräten synchronisiert. Erstelle trotzdem regelmäßig ein PDF-Backup. Für die Bildsuche wird nur der erkannte Produktname an Openverse übermittelt.</p></div></div>
     </div>
     <div className="modal-actions"><button className="button-primary" onClick={onClose}>Alles klar</button></div>
   </section></div>

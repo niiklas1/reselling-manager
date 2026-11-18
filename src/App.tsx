@@ -1425,9 +1425,9 @@ function GmailShippingPanel({ products, onApply }: {
           const byCandidate = new Map(matches.map(match => [match.candidateId, match]))
           reviewed = found.map(candidate => {
             const match = byCandidate.get(candidate.id)
-            return match?.productId
+            return match
               ? { ...candidate, suggestedProductId: match.productId, matchConfidence: match.score }
-              : { ...candidate, suggestedProductId: candidate.suggestedProductId, matchConfidence: candidate.matchConfidence }
+              : candidate
           })
           aiSummary = ' KI-Abgleich mit BGE-M3 abgeschlossen.'
           if (products.length > aiProducts.length) {

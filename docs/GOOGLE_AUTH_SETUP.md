@@ -8,10 +8,13 @@ Das Frontend verwendet Supabase Auth im PKCE-Flow. Der Publishable Key im Browse
 2. Wähle ein Google-Cloud-Projekt oder erstelle eines.
 3. Richte den OAuth-Einwilligungsbildschirm ein. Bei „Extern“ im Testmodus müssen die Google-Konten der Testpersonen als Testnutzer hinzugefügt werden.
 4. Erstelle eine OAuth-Client-ID vom Typ „Webanwendung“.
-5. Trage als autorisierten JavaScript-Ursprung ein:
-   `https://reselling-manager.j6c2njff5r.workers.dev`
-6. Trage als autorisierte Weiterleitungs-URI ein:
+5. Trage unter „Autorisierte JavaScript-Quellen“ beide App-Adressen ein:
+   - Produktion: `https://reselling-manager.j6c2njff5r.workers.dev`
+   - Preview: `https://feature-google-auth-cloud-sync-reselling-manager.j6c2njff5r.workers.dev`
+6. Trage unter „Autorisierte Weiterleitungs-URIs“ die Supabase-Callback-URL ein:
    `https://uuvffkcxgxarfaecwjiz.supabase.co/auth/v1/callback`
+
+Die Supabase-Callback-URL ist für Produktion und Preview dieselbe. Füge keine kurzlebige „Unique Deployment URL“ ein; verwende die stabile Branch-Preview-Adresse oben.
 
 ## 2. Google in Supabase aktivieren
 
@@ -30,18 +33,22 @@ https://supabase.com/dashboard/project/uuvffkcxgxarfaecwjiz/auth/url-configurati
 Setze die Site URL auf:
 `https://reselling-manager.j6c2njff5r.workers.dev`
 
-Füge unter Additional Redirect URLs hinzu:
+Füge unter „Additional Redirect URLs“ hinzu:
 - `https://reselling-manager.j6c2njff5r.workers.dev/**`
+- `https://feature-google-auth-cloud-sync-reselling-manager.j6c2njff5r.workers.dev/**` (nur für den Preview-Test)
 - `http://localhost:5173/**` (nur für lokale Entwicklung)
+
+Nach dem erfolgreichen Test und Merge kann die Preview-Adresse wieder aus der Redirect-Allowlist entfernt werden.
 
 ## 4. Testablauf
 
-- Mit einem Google-Konto anmelden und prüfen, ob die App zurückkehrt.
-- Vor dem Wechsel ein vollständiges PDF-Backup in der bisherigen App-Version erstellen und es nach der Anmeldung über Einstellungen > PDF / Backup importieren einspielen.
-- Ein Produkt anlegen, auf einem zweiten Gerät mit demselben Konto anmelden und den Eintrag prüfen.
+- Mit einem Google-Konto in der Preview anmelden und prüfen, ob die App zurückkehrt.
+- Ein Produkt anlegen und prüfen, ob es nach Neuladen der App erhalten bleibt.
+- Auf einem zweiten Gerät mit demselben Google-Konto anmelden und den Eintrag prüfen.
 - Mit einem zweiten Google-Konto anmelden und sicherstellen, dass es keine Produkte des ersten Kontos sieht.
 - Einen Beleg hochladen und auf dem zweiten Gerät öffnen.
 - Währung und Darstellung ändern und die Synchronisierung testen.
+- Ein Produkt löschen und prüfen, ob es auf dem anderen Gerät ebenfalls verschwindet.
 - Abmelden und erneut anmelden; die Daten müssen erhalten bleiben.
 
 ## Hinweise

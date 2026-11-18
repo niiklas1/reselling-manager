@@ -20,10 +20,8 @@ create table if not exists public.user_settings (
   theme text not null default 'dark' check (theme in ('light', 'dark')),
   gmail_client_id text not null default '',
   gmail_learning_hints jsonb not null default '[]'::jsonb check (jsonb_typeof(gmail_learning_hints) = 'array'),
-  local_migration_completed boolean not null default false,
   updated_at timestamptz not null default now()
 );
-alter table public.user_settings add column if not exists local_migration_completed boolean not null default false;
 alter table public.user_settings enable row level security;
 revoke all on public.user_settings from anon;
 grant select, insert, update, delete on public.user_settings to authenticated;

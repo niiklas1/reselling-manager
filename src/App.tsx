@@ -2142,7 +2142,7 @@ function GmailShippingPanel({ products, onApply, initialClientId, initialLearnin
   }
 
   return <details className="gmail-panel">
-    <summary className="gmail-panel-heading"><div><span className="gmail-panel-icon"><Mail size={17}/></span><div><strong>Gmail-Versandimport</strong><p>Versandbestätigungen erkennen und Trackingdaten passenden Produkten zuordnen.</p></div></div><span className="gmail-readonly">Optional · nur lesen</span><ChevronDown size={16} className="gmail-chevron"/></summary>
+    <summary className="gmail-panel-heading"><div><span className="gmail-panel-icon"><Mail size={17}/></span><div><strong>Gmail-Versandimport</strong><p>Versandbestätigungen erkennen und Trackingdaten passenden Produkten zuordnen.</p></div></div><span className={accessToken ? 'integration-status is-connected' : 'integration-status is-disconnected'}><i/>{accessToken ? 'Verbunden' : 'Nicht verbunden'}</span><ChevronDown size={16} className="gmail-chevron"/></summary>
     <div className="gmail-panel-content">
     <div className="gmail-setup">
       <label className="field"><span>Google OAuth Client-ID</span><input value={clientId} onChange={event => setClientId(event.target.value)} placeholder="123456789-abc.apps.googleusercontent.com" autoComplete="off" spellCheck={false}/></label>

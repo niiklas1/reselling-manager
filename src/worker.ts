@@ -260,8 +260,8 @@ async function matchShippingProducts(request: Request, env: Env): Promise<Respon
     env.AI.run('@cf/baai/bge-m3', { text: [...emailTexts, ...productTexts] }),
     env.AI.run('@cf/google/embeddinggemma-2', {
       input: [
-        ...emailTexts.map(text => 'task: search query | query: ' + text),
-        ...productTexts.map((text, index) => 'task: search document | title: ' + cleanProducts[index].name + ' | text: ' + text),
+        ...emailTexts.map(text => 'task: search result | query: ' + text),
+        ...productTexts.map((text, index) => 'title: ' + cleanProducts[index].name + ' | text: ' + text),
       ],
       dimensions: 768,
     }),

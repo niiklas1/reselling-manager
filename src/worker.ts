@@ -872,7 +872,7 @@ async function getEbayOrders(accessToken: string, since: Date): Promise<EbayOrde
     const payload = JSON.parse(raw) as { orders?: EbayOrder[]; total?: number }
     const orders = Array.isArray(payload.orders) ? payload.orders : []
     all.push(...orders)
-    if (!orders.length || orders.length < 200 || all.length >= Number(payload.total || 0)) break
+    if (!orders.length || orders.length < 200 || (Number(payload.total) > 0 && all.length >= Number(payload.total))) break
   }
   return all
 }
@@ -939,19 +939,6 @@ async function syncEbayUser(userId: string, env: Env): Promise<{ listings: numbe
       body: JSON.stringify(orderRows),
     })
   }
-  const soldByListing = new Map<string, number>()
-  for (const order of orderRows) {
-    if (order.external_listing_id) {
-      soldByListing.set(order.external_listing_id, (soldByListing.get(order.external_listing_id) || 0) + order.quantity)
-    }
-  }
-  for (const [listingId, quantity] of soldByListing) {
-    await supabaseAdminJson(env, 'ebay_listings?user_id=eq.' + encodeURIComponent(userId) + '&external_listing_id=eq.' + encodeURIComponent(listingId), {
-      method: 'PATCH',
-      body: JSON.stringify({ quantity_sold: quantity, last_synced_at: new Date().toISOString() }),
-    })
-  }
-
   await updateEbaySyncStatus(userId, env, {
     last_sync_at: new Date().toISOString(),
     last_sync_error: null,
@@ -1019,7 +1006,7 @@ async function ebayDisconnect(request: Request, env: Env): Promise<Response> {
 }
 
 export default {
-  async scheduled(_controller: ScheduledController, env: Env): Promise<void> {
+  async scheduled(_controller: unknown, env: Env): Promise<void> {
     if (!env.EBAY_CLIENT_ID || !env.EBAY_CLIENT_SECRET || !env.EBAY_RU_NAME ||
         !env.EBAY_TOKEN_ENCRYPTION_KEY || !env.SUPABASE_SECRET_KEY) return
     const rows = await supabaseAdminJson<EbayConnectionRow[]>(

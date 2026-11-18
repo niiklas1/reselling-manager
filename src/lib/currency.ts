@@ -25,7 +25,7 @@ export function convertAmountFromEur(amount:number, targetCurrency:CurrencyCode,
  if(targetCurrency==='EUR') return amount
  const rate=rates[targetCurrency]
  if(!Number.isFinite(rate)||!rate||rate<=0) throw new Error(`Für ${targetCurrency} ist gerade kein gültiger Referenzkurs verfügbar.`)
- return amount*rate
+ return Math.round((amount*rate+Number.EPSILON)*100)/100
 }
 export function formatBaseAmount(amount:number, displayCurrency:CurrencyCode, rates:ExchangeRates):string {
  const hasRate=displayCurrency==='EUR'||Boolean(rates[displayCurrency]&&rates[displayCurrency]!>0)

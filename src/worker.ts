@@ -138,6 +138,16 @@ function gemmaVectors(rawValue: unknown, expectedCount: number): number[][] {
   return indexed.every(row => row.length > 0 && row.every(Number.isFinite)) ? indexed : []
 }
 
+function qwenVectors(rawValue: unknown, expectedCount: number): number[][] {
+  if (!rawValue || typeof rawValue !== 'object') return []
+  const raw = rawValue as { data?: unknown; shape?: number[] }
+  const values = raw.data
+  if (!Array.isArray(values) || values.length !== expectedCount) return []
+  const rows = values as unknown[]
+  const vectors = rows.map(row => Array.isArray(row) ? row.map(Number) : [])
+  return vectors.every(row => row.length > 0 && row.every(Number.isFinite)) ? vectors : []
+}
+
 function rerankerResults(rawValue: unknown): Array<{ id: number; score: number }> {
   if (!rawValue || typeof rawValue !== 'object') return []
   const raw = rawValue as { response?: unknown }
@@ -256,7 +266,7 @@ async function matchShippingProducts(request: Request, env: Env): Promise<Respon
   )
   const total = emailTexts.length + productTexts.length
 
-  const [bgeResult, gemmaResult] = await Promise.allSettled([
+  const [bgeResult, gemmaResult, qwenResult] = await Promise.allSettled([
     env.AI.run('@cf/baai/bge-m3', { text: [...emailTexts, ...productTexts] }),
     env.AI.run('@cf/google/embeddinggemma-2', {
       input: [
@@ -265,12 +275,17 @@ async function matchShippingProducts(request: Request, env: Env): Promise<Respon
       ],
       dimensions: 768,
     }),
+    env.AI.run('@cf/qwen/qwen3-embedding-0.6b', {
+      text: [...emailTexts, ...productTexts],
+    }),
   ])
   const bge = bgeResult.status === 'fulfilled' ? bgeVectors(bgeResult.value, total) : []
   const gemma = gemmaResult.status === 'fulfilled' ? gemmaVectors(gemmaResult.value, total) : []
+  const qwen = qwenResult.status === 'fulfilled' ? qwenVectors(qwenResult.value, total) : []
   const availableModels = [
     ...(bge.length === total ? ['BGE-M3'] : []),
     ...(gemma.length === total ? ['EmbeddingGemma 2'] : []),
+    ...(qwen.length === total ? ['Qwen3-Embedding'] : []),
   ]
   if (!availableModels.length) {
     return jsonResponse({ error: 'Die Embedding-Modelle sind momentan nicht erreichbar. Die lokale Gmail-Erkennung bleibt verfügbar.' }, 503)
@@ -284,13 +299,23 @@ async function matchShippingProducts(request: Request, env: Env): Promise<Respon
       const gemmaSimilarity = gemma.length === total
         ? cosineSimilarity(gemma[candidateIndex], gemma[emailTexts.length + productIndex])
         : 0
+      const qwenSimilarity = qwen.length === total
+        ? cosineSimilarity(qwen[candidateIndex], qwen[emailTexts.length + productIndex])
+        : 0
       const lexicalScore = lexicalSimilarity(candidate.text, product.name + ' ' + product.category)
       const bgeNormalized = bge.length === total ? normalizedCosine(bgeSimilarity) : 0
       const gemmaNormalized = gemma.length === total ? normalizedCosine(gemmaSimilarity) : 0
-      const retrievalScore = bge.length === total && gemma.length === total
-        ? bgeNormalized * 0.42 + gemmaNormalized * 0.42 + lexicalScore * 0.16
-        : (bge.length === total ? bgeNormalized : gemmaNormalized) * 0.82 + lexicalScore * 0.18
-      return { productId: product.id, productIndex, bgeSimilarity, gemmaSimilarity, bgeNormalized, gemmaNormalized, lexicalScore, retrievalScore }
+      const qwenNormalized = qwen.length === total ? normalizedCosine(qwenSimilarity) : 0
+      const embeddingScores = [
+        ...(bge.length === total ? [bgeNormalized] : []),
+        ...(gemma.length === total ? [gemmaNormalized] : []),
+        ...(qwen.length === total ? [qwenNormalized] : []),
+      ]
+      const embeddingAverage = embeddingScores.reduce((sum, score) => sum + score, 0) / embeddingScores.length
+      const retrievalScore = embeddingScores.length >= 2
+        ? embeddingAverage * 0.84 + lexicalScore * 0.16
+        : embeddingAverage * 0.82 + lexicalScore * 0.18
+      return { productId: product.id, productIndex, bgeSimilarity, gemmaSimilarity, qwenSimilarity, bgeNormalized, gemmaNormalized, qwenNormalized, lexicalScore, retrievalScore }
     }).sort((left, right) => right.retrievalScore - left.retrievalScore)
     const shortlist = initial.slice(0, Math.min(10, initial.length))
     let reranked: Array<{ id: number; score: number }> = []
@@ -313,9 +338,12 @@ async function matchShippingProducts(request: Request, env: Env): Promise<Respon
     const hasReranker = reranked.length > 0
     const ranked: RankedModelMatch[] = shortlist.map((item, shortlistIndex) => {
       const rerankerScore = rankById.get(shortlistIndex) ?? 0
+      const availableEmbeddingCount = availableModels.length
       const score = hasReranker
-        ? rerankerScore * 0.50 + item.gemmaNormalized * 0.20 + item.bgeNormalized * 0.15 +
-          item.lexicalScore * 0.10 + dateBonus(candidate, cleanProducts[item.productIndex])
+        ? rerankerScore * 0.50 +
+          (item.bgeNormalized + item.gemmaNormalized + item.qwenNormalized) * (0.45 / availableEmbeddingCount) +
+          item.lexicalScore * 0.05 +
+          dateBonus(candidate, cleanProducts[item.productIndex])
         : item.retrievalScore * 0.92 + dateBonus(candidate, cleanProducts[item.productIndex])
       return {
         productId: item.productId,
@@ -323,6 +351,7 @@ async function matchShippingProducts(request: Request, env: Env): Promise<Respon
         rerankerScore,
         bgeScore: item.bgeSimilarity,
         gemmaScore: item.gemmaSimilarity,
+        qwenScore: item.qwenSimilarity,
         lexicalScore: item.lexicalScore,
       }
     }).sort((left, right) => right.score - left.score)
@@ -335,19 +364,31 @@ async function matchShippingProducts(request: Request, env: Env): Promise<Respon
     const gemmaRank = gemma.length === total
       ? [...initial].sort((left, right) => right.gemmaNormalized - left.gemmaNormalized).findIndex(item => item.productId === best?.productId)
       : 99
-    const modelAgreement = bge.length === total && gemma.length === total
-      ? bgeRank <= 2 && gemmaRank <= 2
-      : bge.length === total ? bgeRank <= 1 : gemmaRank <= 1
+    const qwenRank = qwen.length === total
+      ? [...initial].sort((left, right) => right.qwenNormalized - left.qwenNormalized).findIndex(item => item.productId === best?.productId)
+      : 99
+    const availableRanks = [
+      ...(bge.length === total ? [bgeRank] : []),
+      ...(gemma.length === total ? [gemmaRank] : []),
+      ...(qwen.length === total ? [qwenRank] : []),
+    ]
+    const agreeingModels = availableRanks.filter(rank => rank <= 2).length
+    const modelAgreement = agreeingModels >= Math.min(2, availableRanks.length)
+    const bestEmbeddingSimilarity = Math.max(
+      bge.length === total ? best?.bgeScore || 0 : 0,
+      gemma.length === total ? best?.gemmaScore || 0 : 0,
+      qwen.length === total ? best?.qwenScore || 0 : 0,
+    )
     const enoughEvidence = hasReranker
       ? best.rerankerScore >= 0.05 && (best.lexicalScore >= 0.08 || modelAgreement || best.rerankerScore >= 0.62)
-      : modelAgreement && (best.lexicalScore >= 0.18 || Math.max(best.bgeScore, best.gemmaScore) >= 0.78)
+      : modelAgreement && (best.lexicalScore >= 0.18 || bestEmbeddingSimilarity >= 0.78)
     const clearLead = !second || best.score - second.score >= (modelAgreement ? 0.055 : 0.085)
     const approved = Boolean(best && best.score >= (hasReranker ? 0.35 : 0.45) && enoughEvidence && clearLead)
     const reason = approved
       ? modelAgreement && best.rerankerScore >= 0.55
-        ? 'Hohe Übereinstimmung: beide Embedding-Modelle und der Reranker stimmen überein.'
+        ? 'Hohe Übereinstimmung: mehrere unabhängige Embedding-Modelle und der Reranker stimmen überein.'
         : hasReranker
-          ? 'Semantischer Produktabgleich durch BGE-M3, EmbeddingGemma 2 und direkten Reranker.'
+          ? 'Semantischer Produktabgleich durch BGE-M3, EmbeddingGemma 2, Qwen3 und direkten Reranker.'
           : 'Vorläufiger Abgleich mit den verfügbaren Embedding-Modellen.'
       : 'Keine ausreichend eindeutige Produktübereinstimmung. Bitte manuell auswählen.'
     return {

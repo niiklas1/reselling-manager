@@ -895,11 +895,74 @@ function App() {
   }, [userId, cloudLoadRetry])
 
   useEffect(() => {
-    if (!userId) return
-    const retryCloudSync = () => setCloudSyncRetry(value => value + 1)
-    window.addEventListener('online', retryCloudSync)
-    return () => window.removeEventListener('online', retryCloudSync)
-  }, [userId])
+    if (!userId || !cloudReady) return
+    let active = true
+    const refreshFromCloud = async () => {
+      if (!navigator.onLine) return
+      setCloudSyncRetry(value => value + 1)
+
+      const localProductsAreClean = JSON.stringify(currentProductsRef.current) === JSON.stringify(syncedProductsRef.current)
+      if (localProductsAreClean) {
+        const { data, error } = await supabase.from('products')
+          .select('*')
+          .eq('user_id', userId)
+          .is('deleted_at', null)
+          .order('created_at', { ascending: false })
+        if (!active || error) return
+        // Re-check after the request so an edit made while it was in flight is never discarded.
+        if (JSON.stringify(currentProductsRef.current) === JSON.stringify(syncedProductsRef.current)) {
+          const latest = ((data || []) as CloudProductRow[]).map(cloudRowToProduct)
+          syncedProductsRef.current = latest
+          setProducts(latest)
+        }
+      }
+
+      const localSettings = {
+        currency,
+        theme,
+        gmailClientId: gmailClientId.trim(),
+        gmailLearningHints,
+      }
+      const localSettingsAreClean = JSON.stringify(localSettings) === settingsSnapshotRef.current
+      if (localSettingsAreClean) {
+        const { data, error } = await supabase.from('user_settings')
+          .select('*')
+          .eq('user_id', userId)
+          .maybeSingle()
+        if (!active || error || !data) return
+        const latestSettings = {
+          currency: ['EUR', 'USD', 'GBP', 'CHF'].includes(data.currency) ? data.currency : 'EUR',
+          theme: data.theme === 'light' ? 'light' as const : 'dark' as const,
+          gmailClientId: data.gmail_client_id || '',
+          gmailLearningHints: Array.isArray(data.gmail_learning_hints) ? data.gmail_learning_hints as GmailLearningHint[] : [],
+        }
+        const latestSerialized = JSON.stringify(latestSettings)
+        const stillClean = JSON.stringify({
+          currency,
+          theme,
+          gmailClientId: gmailClientId.trim(),
+          gmailLearningHints,
+        }) === settingsSnapshotRef.current
+        if (stillClean && latestSerialized !== settingsSnapshotRef.current) {
+          settingsSnapshotRef.current = latestSerialized
+          setCurrency(latestSettings.currency)
+          setTheme(latestSettings.theme)
+          setGmailClientId(latestSettings.gmailClientId)
+          setGmailLearningHints(latestSettings.gmailLearningHints)
+        }
+      }
+    }
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') void refreshFromCloud()
+    }
+    window.addEventListener('online', onVisible)
+    document.addEventListener('visibilitychange', onVisible)
+    return () => {
+      active = false
+      window.removeEventListener('online', onVisible)
+      document.removeEventListener('visibilitychange', onVisible)
+    }
+  }, [userId, cloudReady, currency, theme, gmailClientId, gmailLearningHints])
 
   useEffect(() => {
     if (!userId || !cloudReady || loadedUserIdRef.current !== userId) return

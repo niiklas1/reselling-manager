@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import type { Session } from '@supabase/supabase-js'
 import AuthScreen from './components/AuthScreen'
+import EbayIntegrationPanel from './components/EbayIntegrationPanel'
 import { supabase, CLOUD_RECEIPT_PREFIX, uploadCloudReceipt, downloadCloudReceipt, deleteCloudReceipt } from './lib/supabase'
 import {
   ArrowDownToLine, ArrowUpRight, Bell, Box, ChartNoAxesCombined, ChevronDown,
@@ -548,6 +549,9 @@ function dataUrlToBlob(dataUrl: string): Blob {
 
 function App() {
   const [section, setSection] = useState<Section>('Übersicht')
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).has('ebay')) setSection('Einstellungen')
+  }, [])
   const [dataError, setDataError] = useState('')
   const [authSession, setAuthSession] = useState<Session | null>(null)
   const [authLoading, setAuthLoading] = useState(true)
@@ -1420,6 +1424,7 @@ function App() {
             <div className="setting-row settings-account-row"><div><strong>Angemeldet als</strong><span>{authSession?.user.email}</span></div><span className="setting-pill">Privater Workspace</span></div>
             <section className="settings-group">
               <div className="settings-group-heading"><span className="settings-group-icon"><Mail size={17}/></span><div><h3>Integrationen</h3><p>Optionale Verbindungen zu externen Diensten.</p></div></div>
+              <EbayIntegrationPanel accessToken={authSession.access_token}/>
               <GmailShippingPanel key={userId || 'signed-out'} products={products} onApply={applyGmailTracking} initialClientId={gmailClientId} initialLearningHints={gmailLearningHints} onSettingsChange={({ clientId, learningHints }) => { setGmailClientId(current => current === clientId ? current : clientId); setGmailLearningHints(current => JSON.stringify(current) === JSON.stringify(learningHints) ? current : learningHints) }}/>
             </section>
             <section className="settings-group">

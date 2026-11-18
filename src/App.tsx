@@ -10,7 +10,7 @@ import { readInvoiceSource } from './lib/invoiceSource'
 import type { InvoiceLineItem } from './lib/invoiceScanner'
 import { enrichInvoiceProductNames } from './lib/productLookup'
 import { googleImagesUrl, searchProductImages, type ProductImageResult } from './lib/productImages'
-import { applyLearnedGmailMatch, createGmailLearningHint, mergeGmailLearningHint, rankGmailCandidatesWithAI, scanGmailForTracking, type GmailLearningHint, type GmailTrackingCandidate, type ShippingDirection } from './lib/gmailShipping'
+import { applyLearnedGmailMatch, createGmailLearningHint, mergeGmailLearningHint, rankGmailCandidatesWithAI, scanGmailForTracking, scoreProductMatch, type GmailLearningHint, type GmailTrackingCandidate, type ShippingDirection } from './lib/gmailShipping'
 
 type Status = 'Auf Lager' | 'Verkauft'
 const PRODUCT_CATEGORIES = ['Elektronik', 'TCG', 'Alternative'] as const
@@ -1438,10 +1438,18 @@ function GmailShippingPanel({ products, onApply }: {
           const matches = []
           const usedModels = new Set<string>()
           const aiProducts = [...products]
-            .sort((a, b) => (b.purchaseDate || b.saleDate || '').localeCompare(a.purchaseDate || a.saleDate || ''))
+            .map(product => ({
+              product,
+              relevance: Math.max(0, ...found.map(candidate => scoreProductMatch(product.name, candidate.matchText))),
+              recency: product.purchaseDate || product.saleDate || '',
+            }))
+            .sort((a, b) => b.relevance - a.relevance || b.recency.localeCompare(a.recency))
             .slice(0, 150)
-          for (let index = 0; index < found.length; index += 20) {
-            const result = await rankGmailCandidatesWithAI(value, found.slice(index, index + 20), aiProducts)
+            .map(item => item.product)
+          // Larger safe batches avoid re-embedding the same catalogue for too
+          // many small calls while staying within the Worker's request limit.
+          for (let index = 0; index < found.length; index += 40) {
+            const result = await rankGmailCandidatesWithAI(value, found.slice(index, index + 40), aiProducts)
             matches.push(...result.matches)
             result.modelsUsed.forEach(model => usedModels.add(model))
           }
@@ -1567,7 +1575,7 @@ function GmailShippingPanel({ products, onApply }: {
         {candidate.snippet && <p>{candidate.snippet}</p>}
         {candidate.trackingUrl ? <a className="gmail-track-link" href={candidate.trackingUrl} target="_blank" rel="noreferrer">{candidate.trackingUrl} <ExternalLink size={11}/></a> : <small>Kein direkter Tracking-Link in der E-Mail – Sendungsnummer kann trotzdem übernommen werden.</small>}
         {candidate.trackingNumber && <small>Sendungsnummer: {candidate.trackingNumber}</small>}
-        <small>{candidate.matchSource === 'KI-Ensemble' ? 'KI-Match-Score: ' + Math.round(candidate.matchConfidence * 100) + '/100 · ' + (candidate.matchReason || 'Bitte prüfen') : candidate.matchSource === 'Eigene bestätigte Zuordnung' ? (candidate.matchReason || 'Eigene bestätigte Zuordnung') : candidate.suggestedProductId ? (candidate.matchSource === 'Manuell' ? 'Manuell ausgewählt – bitte vor dem Übernehmen prüfen.' : 'Regelbasierter Vorschlag · ' + Math.round(candidate.matchConfidence * 100) + '/100 (bitte prüfen)') : 'Keine eindeutige Produktzuordnung – bitte manuell auswählen'}</small>
+        <small>{candidate.matchSource === 'KI-Ensemble' ? 'KI-Match-Score: ' + candidate.matchConfidence.toFixed(2) + '/1.00 · ' + (candidate.matchReason || 'Bitte prüfen') : candidate.matchSource === 'Eigene bestätigte Zuordnung' ? (candidate.matchReason || 'Eigene bestätigte Zuordnung') : candidate.suggestedProductId ? (candidate.matchSource === 'Manuell' ? 'Manuell ausgewählt – bitte vor dem Übernehmen prüfen.' : 'Regelbasierter Vorschlag · ' + Math.round(candidate.matchConfidence * 100) + '/100 (bitte prüfen)') : 'Keine eindeutige Produktzuordnung – bitte manuell auswählen'}</small>
         <div className="gmail-candidate-actions"><label className="field"><span>Produkt zuordnen</span><select value={candidate.suggestedProductId} onChange={event => setCandidates(current => current.map(item => item.id === candidate.id ? { ...item, suggestedProductId: event.target.value, matchSource: event.target.value ? 'Manuell' : undefined, matchReason: undefined } : item))}><option value="">Produkt auswählen …</option>{products.map(product => <option key={product.id} value={product.id}>{product.name} · {product.status}</option>)}</select></label><label className="field"><span>Versandrichtung</span><select value={candidate.direction} onChange={event => setCandidates(current => current.map(item => item.id === candidate.id ? { ...item, direction: event.target.value as ShippingDirection } : item))}><option value="incoming">Eingehend · Einkauf</option><option value="outgoing">Ausgehend · Verkauf</option></select></label><button type="button" className="button-primary" onClick={() => applyCandidate(candidate)} disabled={!candidate.suggestedProductId}>Übernehmen</button><button type="button" className="button-ghost" onClick={() => setCandidates(current => current.filter(item => item.id !== candidate.id))}>Verwerfen</button></div>
       </article>)}
     </div>}

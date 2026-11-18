@@ -775,13 +775,13 @@ function App() {
       return false
     }
     const existingUrl = payload.direction === 'incoming' ? product.incomingTrackingUrl : product.outgoingTrackingUrl
-    if (existingUrl && existingUrl !== payload.trackingUrl) {
+    if (existingUrl && payload.trackingUrl && existingUrl !== payload.trackingUrl) {
       const directionLabel = payload.direction === 'incoming' ? 'eingehenden' : 'ausgehenden'
       if (!window.confirm('Für dieses Produkt ist bereits ein ' + directionLabel + ' Tracking-Link gespeichert. Soll dieser wirklich überschrieben werden?')) return false
     }
     setProducts(current => current.map(item => item.id !== payload.productId ? item : payload.direction === 'incoming'
-      ? { ...item, incomingCarrier: payload.carrier, incomingTrackingNumber: payload.trackingNumber, incomingTrackingUrl: payload.trackingUrl }
-      : { ...item, outgoingCarrier: payload.carrier, outgoingTrackingNumber: payload.trackingNumber, outgoingTrackingUrl: payload.trackingUrl }))
+      ? { ...item, incomingCarrier: payload.carrier, incomingTrackingNumber: payload.trackingNumber, incomingTrackingUrl: payload.trackingUrl || item.incomingTrackingUrl || '' }
+      : { ...item, outgoingCarrier: payload.carrier, outgoingTrackingNumber: payload.trackingNumber, outgoingTrackingUrl: payload.trackingUrl || item.outgoingTrackingUrl || '' }))
     setDataError('')
     return true
   }
@@ -1559,7 +1559,7 @@ function GmailShippingPanel({ products, onApply }: {
       {candidates.map(candidate => <article className="gmail-candidate" key={candidate.id}>
         <div className="gmail-candidate-top"><div><strong>{candidate.subject}</strong><small>{candidate.sender} · {candidate.date ? new Date(candidate.date).toLocaleDateString('de-DE') : 'Datum unbekannt'} · {candidate.carrier}</small></div><span className={candidate.direction === 'incoming' ? 'gmail-direction incoming' : 'gmail-direction outgoing'}>{candidate.direction === 'incoming' ? 'Eingang' : 'Ausgang'}</span></div>
         {candidate.snippet && <p>{candidate.snippet}</p>}
-        <a className="gmail-track-link" href={candidate.trackingUrl} target="_blank" rel="noreferrer">{candidate.trackingUrl} <ExternalLink size={11}/></a>
+        {candidate.trackingUrl ? <a className="gmail-track-link" href={candidate.trackingUrl} target="_blank" rel="noreferrer">{candidate.trackingUrl} <ExternalLink size={11}/></a> : <small>Kein direkter Tracking-Link in der E-Mail – Sendungsnummer kann trotzdem übernommen werden.</small>}
         {candidate.trackingNumber && <small>Sendungsnummer: {candidate.trackingNumber}</small>}
         <small>{candidate.matchSource === 'KI-Ensemble' ? 'KI-Match-Score: ' + Math.round(candidate.matchConfidence * 100) + '/100 · ' + (candidate.matchReason || 'Bitte prüfen') : candidate.matchSource === 'Eigene bestätigte Zuordnung' ? (candidate.matchReason || 'Eigene bestätigte Zuordnung') : candidate.suggestedProductId ? (candidate.matchSource === 'Manuell' ? 'Manuell ausgewählt – bitte vor dem Übernehmen prüfen.' : 'Regelbasierter Vorschlag · ' + Math.round(candidate.matchConfidence * 100) + '/100 (bitte prüfen)') : 'Keine eindeutige Produktzuordnung – bitte manuell auswählen'}</small>
         <div className="gmail-candidate-actions"><label className="field"><span>Produkt zuordnen</span><select value={candidate.suggestedProductId} onChange={event => setCandidates(current => current.map(item => item.id === candidate.id ? { ...item, suggestedProductId: event.target.value, matchSource: event.target.value ? 'Manuell' : undefined, matchReason: undefined } : item))}><option value="">Produkt auswählen …</option>{products.map(product => <option key={product.id} value={product.id}>{product.name} · {product.status}</option>)}</select></label><label className="field"><span>Versandrichtung</span><select value={candidate.direction} onChange={event => setCandidates(current => current.map(item => item.id === candidate.id ? { ...item, direction: event.target.value as ShippingDirection } : item))}><option value="incoming">Eingehend · Einkauf</option><option value="outgoing">Ausgehend · Verkauf</option></select></label><button type="button" className="button-primary" onClick={() => applyCandidate(candidate)} disabled={!candidate.suggestedProductId}>Übernehmen</button><button type="button" className="button-ghost" onClick={() => setCandidates(current => current.filter(item => item.id !== candidate.id))}>Verwerfen</button></div>

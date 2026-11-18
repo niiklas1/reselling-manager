@@ -60,6 +60,10 @@ const TRACKING_LABEL = /\b(?:track(?:ing)? (?:your )?(?:order|package|parcel|shi
 const TRACKING_ENDPOINT = /(?:^|[\/_.-])(?:track(?:ing)?|shiptrack|shipment-tracking|parcel-tracking|package-tracking|sendungsverfolgung|progress-tracker)(?:$|[\/_.?&=-])/i
 const TRACKING_ID_PARAMS = new Set(['tracking', 'trackingnumber', 'tracking_number', 'trackno', 'track_no', 'tracknum', 'track_num', 'shipmentid', 'shipment_id', 'parcelid', 'parcel_id', 'packageid', 'package_id', 'code'])
 const TRACKING_TERMS = /tracking|track|sendungsverfolg|sendungsnummer|paketnummer|shipment|parcel/i
+
+export function isLikelyShippingEmail(subject: string, bodyText: string): boolean {
+  return SHIPPING_INTENT.test(subject + '\n' + bodyText)
+}
 const CARRIERS: Array<{ name: string; domains: string[] }> = [
   { name: 'DHL', domains: ['dhl.de', 'dhl.com', 'dhl.co.uk', 'dhl.fr', 'dhl.nl', 'dhl.at', 'dhl.ch', 'dhlparcel.nl'] },
   { name: 'Deutsche Post', domains: ['deutschepost.de', 'deutschepost.com'] },
@@ -312,7 +316,7 @@ function parseMessage(message: GmailMessage, products: MatchableProduct[]): Gmai
   const searchableText = [plainText, htmlText, message.snippet || ''].join('\n')
   const links = extractLinks(bodies.html.join('\n'), [plainText, htmlText, message.snippet || ''].join('\n'))
   const trackingNumber = extractTrackingNumber(searchableText)
-  const hasShippingIntent = SHIPPING_INTENT.test(searchableText)
+  const hasShippingIntent = isLikelyShippingEmail(subject, searchableText)
   if (!hasShippingIntent && !trackingNumber) return []
 
   const validLinks = links.map(link => {

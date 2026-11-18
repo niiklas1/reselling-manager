@@ -212,8 +212,7 @@ export default function ShippingCenter({ products, accessToken, userId }: Props)
     const initialise = async () => {
       setLoading(true)
       try {
-        const configured = await loadStatus()
-        if (active && configured) await refresh(true)
+        await loadStatus()
       } catch (cause) {
         if (active) setError(cause instanceof Error ? cause.message : 'Die Versandübersicht konnte nicht geladen werden.')
       } finally {
@@ -297,7 +296,7 @@ export default function ShippingCenter({ products, accessToken, userId }: Props)
         <div>
           <strong>{apiStatus.liveTrackingEnabled ? 'Live-Tracking ist aktiviert' : 'Sendungen werden angezeigt – Live-Tracking noch nicht verbunden'}</strong>
           <span>{apiStatus.liveTrackingEnabled
-            ? '17TRACK übermittelt Statusänderungen automatisch. Neue Sendungsnummern werden beim Öffnen dieser Seite registriert.'
+            ? '17TRACK übermittelt Statusänderungen automatisch. Neue Sendungsnummern werden erst nach deinem Klick auf „Aktualisieren“ angemeldet.'
             : apiStatus.apiAvailable
               ? 'Die API ist verbunden. Automatische Statusmeldungen benötigen noch die Webhook-Sicherheitskonfiguration; du kannst den Status jederzeit manuell aktualisieren.'
               : 'Deine vorhandenen Sendungsnummern aus Produkten und Gmail werden hier gesammelt. Für echte Paketstatus benötigen wir noch den 17TRACK-API-Schlüssel im Cloudflare Worker.'}</span>
@@ -394,7 +393,7 @@ export function ShippingTrackingIntegrationPanel({ accessToken }: { accessToken:
           <a href="https://api.17track.net/" target="_blank" rel="noreferrer">17TRACK API-Konto erstellen <ExternalLink size={12}/></a>
           <a href="https://api.17track.net/en/doc" target="_blank" rel="noreferrer">API-Dokumentation <ExternalLink size={12}/></a>
         </div>
-        <small>Der API-Schlüssel wird nicht im Browser gespeichert. Er wird erst nach sicherer Einrichtung auf dem Worker-Server verwendet.</small>
+        <small>Der API-Schlüssel wird nicht im Browser gespeichert. Er wird erst nach sicherer Einrichtung auf dem Worker-Server verwendet. Neue API-Konten erhalten laut 17TRACK nur 200 kostenlose Registrierungen einmalig – vor der ersten Anmeldung bitte dein Kontingent prüfen.</small>
       </div>
     </details>
   )

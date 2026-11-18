@@ -172,6 +172,7 @@ type CloudProductRow = {
   outgoing_tracking_url: string
   created_at?: string
   updated_at?: string
+  deleted_at: string | null
 }
 
 function productToCloudRow(product: Product, userId: string): CloudProductRow {
@@ -201,6 +202,7 @@ function productToCloudRow(product: Product, userId: string): CloudProductRow {
     outgoing_tracking_number: product.outgoingTrackingNumber || '',
     outgoing_tracking_url: product.outgoingTrackingUrl || '',
     updated_at: new Date().toISOString(),
+    deleted_at: null,
   }
 }
 
@@ -684,7 +686,7 @@ function App() {
 
     async function loadAccountData() {
       const [productsResult, settingsResult] = await Promise.all([
-        supabase.from('products').select('*').eq('user_id', userId).order('created_at', { ascending: false }),
+        supabase.from('products').select('*').eq('user_id', userId).is('deleted_at', null).order('created_at', { ascending: false }),
         supabase.from('user_settings').select('*').eq('user_id', userId).maybeSingle(),
       ])
       if (productsResult.error) throw productsResult.error
@@ -760,7 +762,7 @@ function App() {
             if (error) throw error
           }
           if (removed.length) {
-            const { error } = await supabase.from('products').delete().eq('user_id', userId).in('id', removed)
+            const { error } = await supabase.from('products').update({ deleted_at: new Date().toISOString(), updated_at: new Date().toISOString() }).eq('user_id', userId).in('id', removed)
             if (error) throw error
           }
           const nextReceiptPaths = new Set(snapshot.map(item => item.receiptPath).filter(Boolean))
@@ -815,7 +817,7 @@ function App() {
     const refreshProducts = async () => {
       // Do not overwrite edits which are still waiting to be sent from this device.
       if (JSON.stringify(currentProductsRef.current) !== JSON.stringify(syncedProductsRef.current)) return
-      const { data, error } = await supabase.from('products').select('*').eq('user_id', userId).order('created_at', { ascending: false })
+      const { data, error } = await supabase.from('products').select('*').eq('user_id', userId).is('deleted_at', null).order('created_at', { ascending: false })
       if (!active || error) return
       const refreshed = ((data || []) as CloudProductRow[]).map(cloudRowToProduct)
       syncedProductsRef.current = refreshed
@@ -1079,7 +1081,7 @@ function App() {
       const restoredIds = new Set(finalProducts.map(product => product.id))
       const obsoleteIds = (existingRows || []).map((row: { id: string }) => row.id).filter((id: string) => !restoredIds.has(id))
       if (obsoleteIds.length) {
-        const { error } = await supabase.from('products').delete().eq('user_id', userId).in('id', obsoleteIds)
+        const { error } = await supabase.from('products').update({ deleted_at: new Date().toISOString(), updated_at: new Date().toISOString() }).eq('user_id', userId).in('id', obsoleteIds)
         if (error) throw error
       }
 
@@ -1113,7 +1115,7 @@ function App() {
           const previousIds = new Set(previousProducts.map(product => product.id))
           const insertedIds = (rowsAfterRollback || []).map((row: { id: string }) => row.id).filter((id: string) => !previousIds.has(id))
           if (insertedIds.length) {
-            const { error: rollbackDeleteError } = await supabase.from('products').delete().eq('user_id', userId).in('id', insertedIds)
+            const { error: rollbackDeleteError } = await supabase.from('products').update({ deleted_at: new Date().toISOString(), updated_at: new Date().toISOString() }).eq('user_id', userId).in('id', insertedIds)
             if (rollbackDeleteError) throw rollbackDeleteError
           }
           const { error: settingsRollbackError } = await supabase.from('user_settings').upsert({

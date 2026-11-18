@@ -615,3 +615,8 @@ body{background:#f1eff8}
 :root[data-theme="dark"] .gmail-panel[open] .gmail-panel-heading{border-color:#393653}
 :root[data-theme="dark"] .currency-preview{background:#183a34;border-color:#2e5948;color:#9de3c1}:root[data-theme="dark"] .fx-rate-error{background:#3b2c25;color:#ffc59e}
 @media(max-width:480px){.settings-panel .setting-row{flex-direction:column}.settings-panel .setting-row>div{min-width:0}.settings-panel .currency-select{width:100%}.settings-signout-row button{width:100%}.page-footer{font-size:9px}}
+
+
+/* Touch controls: keep common actions comfortably tappable on phones and tablets. */
+.button-primary,.button-secondary,.button-ghost,.setting-toggle,.top-icon,.theme-toggle,.top-avatar-button,.filter-control select,.currency-select,.nav-link{min-height:44px}
+.field input,.field select{min-height:44px}

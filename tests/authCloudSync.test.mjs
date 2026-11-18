@@ -95,3 +95,10 @@ test('backup restore accepts all currencies supported by the account settings', 
   const app = read('src/App.tsx')
   assert.match(app, /isSupportedCurrency\(restoredCurrency\)/)
 })
+
+
+test('common touch controls have a minimum 44px tap height', () => {
+  const css = read('src/index.css')
+  assert.match(css, /\.button-primary[\s\S]*?min-height:\s*44px/)
+  assert.match(css, /\.field input,\.field select\{min-height:44px\}/)
+})

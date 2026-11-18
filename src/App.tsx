@@ -1159,7 +1159,7 @@ function App() {
       if (storageSnapshot) {
         const restoredCurrency = storageSnapshot['reselling-currency']
         const restoredTheme = storageSnapshot['reselling-theme']
-        if (restoredCurrency && ['EUR', 'USD', 'GBP', 'CHF'].includes(restoredCurrency)) restoredSettings.currency = restoredCurrency
+        if (isSupportedCurrency(restoredCurrency)) restoredSettings.currency = restoredCurrency
         if (restoredTheme === 'light' || restoredTheme === 'dark') restoredSettings.theme = restoredTheme
         restoredSettings.gmailClientId = storageSnapshot['reselling-gmail-client-id'] || ''
         try {

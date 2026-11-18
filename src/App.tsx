@@ -10,7 +10,7 @@ import { readInvoiceSource } from './lib/invoiceSource'
 import type { InvoiceLineItem } from './lib/invoiceScanner'
 import { enrichInvoiceProductNames } from './lib/productLookup'
 import { googleImagesUrl, searchProductImages, type ProductImageResult } from './lib/productImages'
-import { scanGmailForTracking, type GmailTrackingCandidate, type ShippingDirection } from './lib/gmailShipping'
+import { rankGmailCandidatesWithAI, scanGmailForTracking, type GmailTrackingCandidate, type ShippingDirection } from './lib/gmailShipping'
 
 type Status = 'Auf Lager' | 'Verkauft'
 const PRODUCT_CATEGORIES = ['Elektronik', 'TCG', 'Alternative'] as const
@@ -1374,6 +1374,7 @@ function GmailShippingPanel({ products, onApply }: {
 }) {
   const [clientId, setClientId] = useState(() => localStorage.getItem('reselling-gmail-client-id') || '')
   const [accessToken, setAccessToken] = useState('')
+  const [aiMatching, setAiMatching] = useState(false)
   const [candidates, setCandidates] = useState<GmailTrackingCandidate[]>([])
   const [days, setDays] = useState('180')
   const [ready, setReady] = useState(false)
@@ -1408,11 +1409,40 @@ function GmailShippingPanel({ products, onApply }: {
     setError('')
     setMessage('')
     try {
-      const found = await scanGmailForTracking(value, products, Number(days), 100)
-      setCandidates(found)
-      setMessage(found.length
-        ? found.length + ' mögliche Versandlink(s) gefunden. Prüfe die Produktzuordnung, bevor du sie übernimmst.'
-        : 'Keine passenden Versandlinks im gewählten Zeitraum gefunden.')
+      const found = await scanGmailForTracking(value, products, Number(days), 250)
+      let reviewed = found
+      let aiSummary = ''
+      if (aiMatching && found.length > 0) {
+        setMessage('Versandmails erkannt. Die KI vergleicht jetzt Betreff, Textausschnitte und deine Produktliste …')
+        try {
+          const matches = []
+          const aiProducts = [...products]
+            .sort((a, b) => (b.purchaseDate || b.saleDate || '').localeCompare(a.purchaseDate || a.saleDate || ''))
+            .slice(0, 70)
+          for (let index = 0; index < found.length; index += 20) {
+            matches.push(...await rankGmailCandidatesWithAI(value, found.slice(index, index + 20), aiProducts))
+          }
+          const byCandidate = new Map(matches.map(match => [match.candidateId, match]))
+          reviewed = found.map(candidate => {
+            const match = byCandidate.get(candidate.id)
+            return match
+              ? { ...candidate, suggestedProductId: match.productId, matchConfidence: match.score }
+              : candidate
+          })
+          aiSummary = ' KI-Abgleich mit BGE-M3 abgeschlossen.'
+          if (products.length > aiProducts.length) {
+            aiSummary += ' Berücksichtigt wurden die 70 zuletzt bearbeiteten Produkte.'
+          }
+        } catch (aiError) {
+          const detail = aiError instanceof Error ? aiError.message : 'Unbekannter KI-Fehler.'
+          setError('KI-Abgleich nicht verfügbar: ' + detail + ' Die regelbasierte Erkennung wird trotzdem angezeigt.')
+          aiSummary = ' Die KI war nicht erreichbar; angezeigt werden die lokalen Produktvorschläge.'
+        }
+      }
+      setCandidates(reviewed)
+      setMessage(reviewed.length
+        ? reviewed.length + ' eindeutige Versand-/Trackingtreffer gefunden.' + aiSummary + ' Prüfe jede Zuordnung vor dem Übernehmen.'
+        : 'Keine eindeutigen Versandmails mit verwertbaren Trackingdaten im gewählten Zeitraum gefunden.')
     } catch (scanError) {
       const detail = scanError instanceof Error ? scanError.message : 'Gmail-Suche fehlgeschlagen.'
       setError(detail)
@@ -1436,14 +1466,15 @@ function GmailShippingPanel({ products, onApply }: {
           setError('Google-Anmeldung fehlgeschlagen: ' + (response.error || 'Kein Zugriffstoken erhalten.'))
           return
         }
-        // The short-lived OAuth access token stays in component memory only.
-        // It is deliberately never written to localStorage or sent to our Worker.
+        // The short-lived OAuth access token is never persisted in browser storage.
+        // Only when the user enables AI matching is it sent transiently to our Worker
+        // so the Worker can verify Gmail access before processing minimized text.
         setAccessToken(response.access_token)
         void syncWithToken(response.access_token)
       },
       error_callback: authError => setError(authError.message || 'Google-Anmeldung wurde abgebrochen.')
     })
-  }, [clientId, ready, products, days])
+  }, [clientId, ready, products, days, aiMatching])
 
   function connectAndScan() {
     setError('')
@@ -1481,6 +1512,10 @@ function GmailShippingPanel({ products, onApply }: {
     <div className="gmail-setup">
       <label className="field"><span>Google OAuth Client-ID</span><input value={clientId} onChange={event => setClientId(event.target.value)} placeholder="123456789-abc.apps.googleusercontent.com" autoComplete="off" spellCheck={false}/></label>
       <small>Einmalig: Gmail API in Google Cloud aktivieren, OAuth-Einwilligungsbildschirm einrichten, OAuth-Client vom Typ „Webanwendung“ erstellen und diese oben angezeigte Website-Adresse als autorisierten JavaScript-Ursprung eintragen. Danach nur die Client-ID hier einfügen. Kein Client Secret nötig; Zugriff nur lesend.</small>
+      <label className="gmail-ai-toggle">
+        <input type="checkbox" checked={aiMatching} onChange={event => setAiMatching(event.target.checked)}/>
+        <span><strong>KI-Produktabgleich aktivieren (BGE-M3)</strong><small>Optional: Minimierte Betreff-/Textausschnitte, Absender-Domain und Produktnamen werden für den semantischen Abgleich einmalig an Cloudflare Workers AI übertragen. Keine automatische Speicherung der E-Mail-Inhalte. Die Vorschläge bleiben prüfpflichtig.</small></span>
+      </label>
       <div className="gmail-setup-links"><a href="https://console.cloud.google.com/apis/library/gmail.googleapis.com" target="_blank" rel="noreferrer">Gmail API aktivieren <ExternalLink size={11}/></a><a href="https://console.cloud.google.com/auth/clients" target="_blank" rel="noreferrer">OAuth Client-ID erstellen <ExternalLink size={11}/></a><a href="https://developers.google.com/identity/oauth2/web/guides/use-token-model" target="_blank" rel="noreferrer">Google-Anleitung <ExternalLink size={11}/></a></div>
       <div className="gmail-origin"><span>Autorisierte JavaScript-Quelle:</span><code>{window.location.origin}</code><button type="button" onClick={() => void navigator.clipboard?.writeText(window.location.origin)}>Kopieren</button></div>
     </div>
@@ -1497,7 +1532,7 @@ function GmailShippingPanel({ products, onApply }: {
         <div className="gmail-candidate-actions"><label className="field"><span>Produkt zuordnen</span><select value={candidate.suggestedProductId} onChange={event => setCandidates(current => current.map(item => item.id === candidate.id ? { ...item, suggestedProductId: event.target.value } : item))}><option value="">Produkt auswählen …</option>{products.map(product => <option key={product.id} value={product.id}>{product.name} · {product.status}</option>)}</select></label><label className="field"><span>Versandrichtung</span><select value={candidate.direction} onChange={event => setCandidates(current => current.map(item => item.id === candidate.id ? { ...item, direction: event.target.value as ShippingDirection } : item))}><option value="incoming">Eingehend · Einkauf</option><option value="outgoing">Ausgehend · Verkauf</option></select></label><button type="button" className="button-primary" onClick={() => applyCandidate(candidate)} disabled={!candidate.suggestedProductId}>Übernehmen</button><button type="button" className="button-ghost" onClick={() => setCandidates(current => current.filter(item => item.id !== candidate.id))}>Verwerfen</button></div>
       </article>)}
     </div>}
-    <small className="gmail-privacy">Die Suche läuft mit der Google-Berechtigung „gmail.readonly“. E-Mail-Inhalte werden nur im Browser ausgewertet. Treffer werden nie ohne deine Bestätigung einem Produkt zugeordnet.</small>
+    <small className="gmail-privacy">Gmail wird nur lesend durchsucht. Ohne aktivierte KI bleibt die gesamte E-Mail-Auswertung im Browser. Bei aktivierter KI werden ausschließlich minimierte Textausschnitte und Produktdaten an Cloudflare Workers AI gesendet; der kurzlebige Gmail-Token wird dort nur zur Prüfung des Zugriffs verwendet und nicht gespeichert. Treffer werden nie ohne deine Bestätigung einem Produkt zugeordnet.</small>
   </section>
 }
 

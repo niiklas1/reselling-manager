@@ -421,6 +421,14 @@ body{background:#f1eff8}
 :root[data-theme="dark"] .shipping-form-block section>strong{color:#e8e5f5}
 :root[data-theme="dark"] .tracking-inline{background:#211e39;border-color:#3a3157;color:#d0adff}
 :root[data-theme="dark"] .tracking-inline.outgoing{background:#19342f;border-color:#2e594d;color:#8fe0be}
+.gmail-ai-toggle{display:flex;align-items:flex-start;gap:9px;padding:10px 11px;border:1px solid #ded8f0;border-radius:9px;background:#f7f4ff;cursor:pointer}
+.gmail-ai-toggle input{width:15px;height:15px;margin:1px 0 0;accent-color:#7556d2;flex-shrink:0}
+.gmail-ai-toggle>span{display:grid;gap:4px}
+.gmail-ai-toggle strong{font-size:9px;color:#51456f}
+.gmail-ai-toggle small{font-size:8px;line-height:1.5;color:#77728d}
+:root[data-theme="dark"] .gmail-ai-toggle{background:#211e39;border-color:#493e67}
+:root[data-theme="dark"] .gmail-ai-toggle strong{color:#e8e5f5}
+:root[data-theme="dark"] .gmail-ai-toggle small{color:#a1a8c0}
 :root[data-theme="dark"] .gmail-panel{border-color:#2a2a44}
 :root[data-theme="dark"] .gmail-panel-heading strong,:root[data-theme="dark"] .gmail-candidates-heading strong,:root[data-theme="dark"] .gmail-candidate-top strong{color:#e8e5f5}
 :root[data-theme="dark"] .gmail-panel-heading p,:root[data-theme="dark"] .gmail-setup>small,:root[data-theme="dark"] .gmail-privacy,:root[data-theme="dark"] .gmail-origin span,:root[data-theme="dark"] .gmail-candidate-top small,:root[data-theme="dark"] .gmail-candidate>small,:root[data-theme="dark"] .gmail-candidates-heading span{color:#a1a8c0}

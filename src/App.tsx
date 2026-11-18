@@ -768,10 +768,22 @@ function App() {
     }
   }
   function openNew() { setEditing(null); setShowForm(true) }
-  function applyGmailTracking(payload: { productId: string; direction: ShippingDirection; carrier: string; trackingNumber: string; trackingUrl: string }) {
+  function applyGmailTracking(payload: { productId: string; direction: ShippingDirection; carrier: string; trackingNumber: string; trackingUrl: string }): boolean {
+    const product = products.find(item => item.id === payload.productId)
+    if (!product) {
+      setDataError('Das ausgewählte Produkt ist nicht mehr vorhanden. Bitte lade die Gmail-Treffer erneut.')
+      return false
+    }
+    const existingUrl = payload.direction === 'incoming' ? product.incomingTrackingUrl : product.outgoingTrackingUrl
+    if (existingUrl && existingUrl !== payload.trackingUrl) {
+      const directionLabel = payload.direction === 'incoming' ? 'eingehenden' : 'ausgehenden'
+      if (!window.confirm('Für dieses Produkt ist bereits ein ' + directionLabel + ' Tracking-Link gespeichert. Soll dieser wirklich überschrieben werden?')) return false
+    }
     setProducts(current => current.map(item => item.id !== payload.productId ? item : payload.direction === 'incoming'
       ? { ...item, incomingCarrier: payload.carrier, incomingTrackingNumber: payload.trackingNumber, incomingTrackingUrl: payload.trackingUrl }
       : { ...item, outgoingCarrier: payload.carrier, outgoingTrackingNumber: payload.trackingNumber, outgoingTrackingUrl: payload.trackingUrl }))
+    setDataError('')
+    return true
   }
 
   const navItems: { label: Section; icon: typeof LayoutDashboard }[] = [
@@ -896,8 +908,8 @@ function ProductTable({ products, onEdit, onDelete, onSell, onReceipt }: { produ
         <div className="product-thumb">{product.imageUrl ? <img src={product.imageUrl} alt={product.name}/> : <Tag size={16}/>}</div>
         <div><strong>{product.name}</strong><span>{label ? label + ' · ' + (product.category || 'Ohne Kategorie') : (product.category || 'Ohne Kategorie')}</span>
           {product.receiptPath && <button className="receipt-inline" onClick={() => onReceipt(product)} title="Originalbeleg öffnen"><FileText size={12}/> Beleg öffnen</button>}
-          {product.incomingTrackingUrl && <a className="tracking-inline incoming" href={product.incomingTrackingUrl} target="_blank" rel="noreferrer"><ArrowDownToLine size={11}/> Eingang · {product.incomingCarrier || 'Sendung'} <ExternalLink size={10}/></a>}
-          {product.outgoingTrackingUrl && <a className="tracking-inline outgoing" href={product.outgoingTrackingUrl} target="_blank" rel="noreferrer"><ArrowUpRight size={11}/> Ausgang · {product.outgoingCarrier || 'Sendung'} <ExternalLink size={10}/></a>}
+          {product.incomingTrackingUrl && <a className="tracking-inline incoming" href={product.incomingTrackingUrl} target="_blank" rel="noreferrer"><ArrowDownToLine size={11}/> Eingang · {product.incomingCarrier || 'Sendung'}{product.incomingTrackingNumber ? ' · ' + product.incomingTrackingNumber : ''} <ExternalLink size={10}/></a>}
+          {product.outgoingTrackingUrl && <a className="tracking-inline outgoing" href={product.outgoingTrackingUrl} target="_blank" rel="noreferrer"><ArrowUpRight size={11}/> Ausgang · {product.outgoingCarrier || 'Sendung'}{product.outgoingTrackingNumber ? ' · ' + product.outgoingTrackingNumber : ''} <ExternalLink size={10}/></a>}
         </div>
       </div></td>
       <td>1</td>
@@ -1358,7 +1370,7 @@ type GoogleIdentity = {
 
 function GmailShippingPanel({ products, onApply }: {
   products: Product[]
-  onApply: (payload: { productId: string; direction: ShippingDirection; carrier: string; trackingNumber: string; trackingUrl: string }) => void
+  onApply: (payload: { productId: string; direction: ShippingDirection; carrier: string; trackingNumber: string; trackingUrl: string }) => boolean
 }) {
   const [clientId, setClientId] = useState(() => localStorage.getItem('reselling-gmail-client-id') || '')
   const [accessToken, setAccessToken] = useState('')
@@ -1452,13 +1464,14 @@ function GmailShippingPanel({ products, onApply }: {
       setError('Bitte wähle zuerst das passende Produkt aus.')
       return
     }
-    onApply({
+    const applied = onApply({
       productId: candidate.suggestedProductId,
       direction: candidate.direction,
       carrier: candidate.carrier,
       trackingNumber: candidate.trackingNumber,
       trackingUrl: candidate.trackingUrl,
     })
+    if (!applied) return
     setCandidates(current => current.filter(item => item.id !== candidate.id))
     setMessage('Versanddaten wurden dem Produkt zugeordnet.')
   }
@@ -1480,6 +1493,7 @@ function GmailShippingPanel({ products, onApply }: {
         {candidate.snippet && <p>{candidate.snippet}</p>}
         <a className="gmail-track-link" href={candidate.trackingUrl} target="_blank" rel="noreferrer">{candidate.trackingUrl} <ExternalLink size={11}/></a>
         {candidate.trackingNumber && <small>Sendungsnummer: {candidate.trackingNumber}</small>}
+        <small>{candidate.suggestedProductId ? 'Automatischer Produktvorschlag · ' + Math.round(candidate.matchConfidence * 100) + '% Übereinstimmung (bitte prüfen)' : 'Keine eindeutige Produktzuordnung – bitte manuell auswählen'}</small>
         <div className="gmail-candidate-actions"><label className="field"><span>Produkt zuordnen</span><select value={candidate.suggestedProductId} onChange={event => setCandidates(current => current.map(item => item.id === candidate.id ? { ...item, suggestedProductId: event.target.value } : item))}><option value="">Produkt auswählen …</option>{products.map(product => <option key={product.id} value={product.id}>{product.name} · {product.status}</option>)}</select></label><label className="field"><span>Versandrichtung</span><select value={candidate.direction} onChange={event => setCandidates(current => current.map(item => item.id === candidate.id ? { ...item, direction: event.target.value as ShippingDirection } : item))}><option value="incoming">Eingehend · Einkauf</option><option value="outgoing">Ausgehend · Verkauf</option></select></label><button type="button" className="button-primary" onClick={() => applyCandidate(candidate)} disabled={!candidate.suggestedProductId}>Übernehmen</button><button type="button" className="button-ghost" onClick={() => setCandidates(current => current.filter(item => item.id !== candidate.id))}>Verwerfen</button></div>
       </article>)}
     </div>}

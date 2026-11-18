@@ -41,23 +41,23 @@ type GmailMessage = {
 const GMAIL_API = 'https://gmail.googleapis.com/gmail/v1/users/me'
 const TRACKING_TERMS = /tracking|track(?:ing)?|sendungsverfolg|sendungsnummer|paketnummer|shipment|parcel|delivery|lieferung|versand|versendet|shipped|dispatched|zugestellt/i
 const CARRIER_HOSTS: Array<{ name: string; pattern: RegExp }> = [
-  { name: 'DHL', pattern: /(^|\\.)dhl\\./i },
-  { name: 'Deutsche Post', pattern: /(^|\\.)deutschepost\\.de$/i },
-  { name: 'DPD', pattern: /(^|\\.)dpd\\./i },
-  { name: 'Hermes', pattern: /(^|\\.)(myhermes\\.de|hermesworld\\.com|hermes\\.[a-z.]+)$/i },
-  { name: 'GLS', pattern: /(^|\\.)gls(-group)?\\./i },
-  { name: 'UPS', pattern: /(^|\\.)ups\\./i },
-  { name: 'FedEx', pattern: /(^|\\.)fedex\\./i },
-  { name: 'Amazon Logistics', pattern: /(^|\\.)amazon\\.[a-z.]+$/i },
-  { name: 'InPost', pattern: /(^|\\.)inpost\\./i },
-  { name: 'PostNL', pattern: /(^|\\.)postnl\\./i },
-  { name: 'DPDgroup', pattern: /(^|\\.)chrono-post\\./i },
+  { name: 'DHL', pattern: /(^|\.)dhl\./i },
+  { name: 'Deutsche Post', pattern: /(^|\.)deutschepost\.de$/i },
+  { name: 'DPD', pattern: /(^|\.)dpd\./i },
+  { name: 'Hermes', pattern: /(^|\.)(myhermes\.de|hermesworld\.com|hermes\.[a-z.]+)$/i },
+  { name: 'GLS', pattern: /(^|\.)gls(-group)?\./i },
+  { name: 'UPS', pattern: /(^|\.)ups\./i },
+  { name: 'FedEx', pattern: /(^|\.)fedex\./i },
+  { name: 'Amazon Logistics', pattern: /(^|\.)amazon\.[a-z.]+$/i },
+  { name: 'InPost', pattern: /(^|\.)inpost\./i },
+  { name: 'PostNL', pattern: /(^|\.)postnl\./i },
+  { name: 'DPDgroup', pattern: /(^|\.)chrono-post\./i },
 ]
 
 function normalizeText(value: string): string {
   return value.toLocaleLowerCase('de-DE')
     .normalize('NFD')
-    .replace(/[\\u0300-\\u036f]/g, '')
+    .replace(/[\u0300-\u036f]/g, '')
     .replace(/[^a-z0-9]+/g, ' ')
     .trim()
 }
@@ -67,7 +67,7 @@ export function identifyCarrier(urlOrHost: string): string {
   try {
     host = new URL(urlOrHost).hostname
   } catch {
-    host = urlOrHost.replace(/^www\\./i, '')
+    host = urlOrHost.replace(/^www\./i, '')
   }
   return CARRIER_HOSTS.find(item => item.pattern.test(host))?.name || ''
 }
@@ -77,7 +77,7 @@ export function isSafeTrackingUrl(rawUrl: string): boolean {
     const url = new URL(rawUrl)
     if (url.protocol !== 'https:' || url.username || url.password) return false
     if (url.hostname === 'localhost' || url.hostname.endsWith('.local')) return false
-    if (/^(?:127\\.|10\\.|192\\.168\\.|172\\.(?:1[6-9]|2\\d|3[01])\\.)/.test(url.hostname)) return false
+    if (/^(?:127\.|10\.|192\.168\.|172\.(?:1[6-9]|2\d|3[01])\.)/.test(url.hostname)) return false
     return Boolean(identifyCarrier(url.hostname) || TRACKING_TERMS.test(url.pathname + url.search))
   } catch {
     return false
@@ -87,9 +87,9 @@ export function isSafeTrackingUrl(rawUrl: string): boolean {
 function unwrapTrackingUrl(rawUrl: string): string {
   try {
     const url = new URL(rawUrl)
-    if (/^(?:www\\.)?(?:google\\.com|googleusercontent\\.com)$/i.test(url.hostname)) {
+    if (/^(?:www\.)?(?:google\.com|googleusercontent\.com)$/i.test(url.hostname)) {
       const nested = url.searchParams.get('url') || url.searchParams.get('q') || url.searchParams.get('u')
-      if (nested && /^https:\\/\\//i.test(nested)) return nested
+      if (nested && /^https:\/\//i.test(nested)) return nested
     }
     return url.toString()
   } catch {
@@ -143,16 +143,16 @@ function extractLinks(html: string, text: string): Array<{ url: string; label: s
       })
     })
   }
-  for (const match of text.matchAll(/https?:\\/\\/[^\\s<>"']+/gi)) {
+  for (const match of text.matchAll(/https?:\/\/[^\s<>"']+/gi)) {
     links.push({ url: match[0].replace(/[),.;!?]+$/g, ''), label: '' })
   }
   return links
 }
 
 function extractTrackingNumber(text: string): string {
-  const labeled = text.match(/(?:sendungsnummer|paketnummer|tracking(?:nummer|\\s*(?:number|id))?|shipment\\s*(?:number|id)|parcel\\s*(?:number|id))\\s*(?:ist|is|lautet|[:#-])?\\s*([A-Z0-9][A-Z0-9 -]{7,34})/i)
+  const labeled = text.match(/(?:sendungsnummer|paketnummer|tracking(?:nummer|\s*(?:number|id))?|shipment\s*(?:number|id)|parcel\s*(?:number|id))\s*(?:ist|is|lautet|[:#-])?\s*([A-Z0-9][A-Z0-9 -]{7,34})/i)
   if (!labeled) return ''
-  const value = labeled[1].split(/\\r?\\n/)[0].trim().replace(/[.,;:]+$/g, '')
+  const value = labeled[1].split(/\r?\n/)[0].trim().replace(/[.,;:]+$/g, '')
   const compact = value.replace(/[ -]/g, '')
   if (compact.length < 8 || compact.length > 35 || !/[0-9]/.test(compact)) return ''
   return compact
@@ -188,13 +188,13 @@ function parseMessage(message: GmailMessage, products: MatchableProduct[]): Gmai
   const headers = payload?.headers
   const subject = headerValue(headers, 'subject')
   const sender = headerValue(headers, 'from')
-  const combinedText = [subject, ...bodies.text].join('\\n')
+  const combinedText = [subject, ...bodies.text].join('\n')
   const htmlText = bodies.html.map(html => {
     if (typeof DOMParser === 'undefined') return html.replace(/<[^>]*>/g, ' ')
     return new DOMParser().parseFromString(html, 'text/html').body?.textContent || ''
-  }).join('\\n')
-  const searchableText = [combinedText, htmlText, message.snippet || ''].join('\\n')
-  const links = extractLinks(bodies.html.join('\\n'), [combinedText, htmlText].join('\\n'))
+  }).join('\n')
+  const searchableText = [combinedText, htmlText, message.snippet || ''].join('\n')
+  const links = extractLinks(bodies.html.join('\n'), [combinedText, htmlText].join('\n'))
   const validLinks = links.map(link => {
     const url = unwrapTrackingUrl(link.url)
     return { url, label: link.label, carrier: identifyCarrier(url) }

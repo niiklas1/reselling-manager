@@ -672,7 +672,7 @@ export function createGmailLearningHint(
   const productWords = new Set(productTokens(product.name))
   const relevant = tokens.filter(token => productWords.has(token))
   const hasDistinctiveToken = relevant.some(token => token.length >= 8)
-  if (relevant.length < 2 && !hasDistinctiveToken) return null
+  if (relevant.length < 3 && !hasDistinctiveToken) return null
   return {
     senderDomain: candidate.senderDomain.toLowerCase(),
     productId,
@@ -702,7 +702,7 @@ export function applyLearnedGmailMatch(
     .map(hint => {
       const overlap = hint.subjectTokens.filter(token => candidateWords.has(token))
       const longToken = overlap.some(token => token.length >= 8)
-      const sufficient = overlap.length >= 2 || longToken
+      const sufficient = overlap.length >= 3 || longToken
       return { hint, overlap: overlap.length, sufficient, score: overlap.length / Math.max(1, hint.subjectTokens.length) }
     })
     .filter(item => item.sufficient)

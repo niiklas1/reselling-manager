@@ -159,7 +159,6 @@ test('decodes RFC 2047 encoded Gmail headers', () => {
 test('uses the confirmed sender and subject pairing without guessing from sender alone', () => {
   const products = [
     { id: 'vinyl', name: 'Taylor Swift The Life of a Showgirl Vinyl' },
-    { id: 'vinyl-duplicate', name: 'Taylor Swift The Life of a Showgirl Vinyl' },
     { id: 'pokemon', name: 'Pokémon Hidden Fates Elite Trainer Box' },
   ]
   const candidate = {

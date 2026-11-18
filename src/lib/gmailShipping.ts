@@ -423,7 +423,6 @@ function parseMessage(message: GmailMessage, products: MatchableProduct[]): Gmai
     (Boolean(link.trackingNumber || trackingNumber) || TRACKING_LABEL.test(link.label + ' ' + link.context))
   )
 
-  if (!validLinks.length) return []
   const isBulk = Boolean(headerValue(headers, 'list-unsubscribe') || headerValue(headers, 'list-id')) ||
     /^(?:bulk|list)/i.test(headerValue(headers, 'precedence'))
   const isPromotion = labels.includes('CATEGORY_PROMOTIONS')
@@ -436,12 +435,16 @@ function parseMessage(message: GmailMessage, products: MatchableProduct[]): Gmai
   const direction: ShippingDirection = labels.includes('SENT') ? 'outgoing' : 'incoming'
   const matchText = [subject, searchableText, domain].join('\n').slice(0, 5000)
   const match = suggestProductMatch(products, searchableText)
+  const inferredCarrier = identifyCarrier(domain) || CARRIERS.find(carrier =>
+    normalizeText(searchableText + ' ' + sender).includes(normalizeText(carrier.name))
+  )?.name || 'Versanddienst'
 
-  return uniqueLinks.map((link, index) => {
-    const resolvedTrackingNumber = link.trackingNumber || trackingNumber
-    const trackingUrl = link.url
-    return {
-      id: (message.id || 'mail') + ':' + index,
+  if (!uniqueLinks.length) {
+    // Preserve explicitly labelled parcel numbers even when the carrier email
+    // omitted a direct tracking URL. Never invent a tracking destination.
+    if (!trackingNumber) return []
+    return [{
+      id: (message.id || 'mail') + ':number',
       messageId: message.id || '',
       threadId: message.threadId || '',
       subject: subject || '(ohne Betreff)',
@@ -449,15 +452,33 @@ function parseMessage(message: GmailMessage, products: MatchableProduct[]): Gmai
       senderDomain: domain,
       date,
       direction,
-      carrier: link.carrier || 'Versanddienst',
-      trackingNumber: resolvedTrackingNumber,
-      trackingUrl,
+      carrier: inferredCarrier,
+      trackingNumber,
+      trackingUrl: '',
       snippet: (message.snippet || '').slice(0, 220),
       matchText: minimizeForAi(matchText),
       suggestedProductId: match.productId,
       matchConfidence: match.confidence,
-    }
-  })
+    }]
+  }
+
+  return uniqueLinks.map((link, index) => ({
+    id: (message.id || 'mail') + ':' + index,
+    messageId: message.id || '',
+    threadId: message.threadId || '',
+    subject: subject || '(ohne Betreff)',
+    sender,
+    senderDomain: domain,
+    date,
+    direction,
+    carrier: link.carrier || inferredCarrier,
+    trackingNumber: link.trackingNumber || trackingNumber,
+    trackingUrl: link.url,
+    snippet: (message.snippet || '').slice(0, 220),
+    matchText: minimizeForAi(matchText),
+    suggestedProductId: match.productId,
+    matchConfidence: match.confidence,
+  }))
 }
 
 async function getJson<T>(url: string, token: string): Promise<T> {
@@ -528,12 +549,20 @@ export async function scanGmailForTracking(
   const messages: GmailMessage[] = []
   for (let index = 0; index < uniqueRefs.length; index += 6) {
     const batch = uniqueRefs.slice(index, index + 6)
-    const fetched = await Promise.all(batch.map(ref => {
+    const fetched = await Promise.allSettled(batch.map(ref => {
       const url = new URL(GMAIL_API + '/messages/' + encodeURIComponent(ref.id))
       url.searchParams.set('format', 'full')
       return getJson<GmailMessage>(url.toString(), accessToken)
     }))
-    messages.push(...fetched)
+    for (const result of fetched) {
+      if (result.status === 'fulfilled') messages.push(result.value)
+      else {
+        const detail = result.reason instanceof Error ? result.reason.message : ''
+        if (detail.includes('abgelaufen') || detail.includes('abgelehnt')) throw result.reason
+        // A deleted, malformed or transiently unavailable individual message
+        // should not discard the remaining valid Gmail search results.
+      }
+    }
   }
 
   const existingUrls = new Set(products.flatMap(product =>
@@ -542,7 +571,7 @@ export async function scanGmailForTracking(
       .map(canonicalTrackingUrl)
   ))
   const candidates = messages.flatMap(message => parseMessage(message, products))
-    .filter(candidate => !existingUrls.has(canonicalTrackingUrl(candidate.trackingUrl)))
+    .filter(candidate => !candidate.trackingUrl || !existingUrls.has(canonicalTrackingUrl(candidate.trackingUrl)))
 
   // The same tracking number is often repeated in order, dispatch and follow-up
   // messages. Keep only the newest useful message for each physical shipment.

@@ -111,6 +111,26 @@ export function scoreProductMatch(productName: string, emailText: string): numbe
   return Math.min(0.96, 0.58 + coverage * 0.38 + (matched.length >= 3 ? 0.04 : 0))
 }
 
+export function suggestProductMatch(
+  products: MatchableProduct[],
+  emailText: string,
+): { productId: string; confidence: number } {
+  const ranked = products.map(product => ({
+    id: product.id,
+    confidence: scoreProductMatch(product.name, emailText),
+  })).sort((a, b) => b.confidence - a.confidence)
+  const best = ranked[0]
+  const second = ranked[1]
+  if (!best || best.confidence < 0.78) {
+    return { productId: '', confidence: best?.confidence || 0 }
+  }
+  // Similar product names or identical units must never be auto-assigned.
+  if (second && best.confidence - second.confidence < 0.12) {
+    return { productId: '', confidence: best.confidence }
+  }
+  return { productId: best.id, confidence: best.confidence }
+}
+
 function decodeBase64Url(value: string): string {
   try {
     const normalized = value.replace(/-/g, '+').replace(/_/g, '/')
@@ -207,13 +227,9 @@ function parseMessage(message: GmailMessage, products: MatchableProduct[]): Gmai
   const date = dateFromMessage(message)
   const direction: ShippingDirection = message.labelIds?.includes('SENT') ? 'outgoing' : 'incoming'
   const searchable = [subject, sender, searchableText, ...uniqueLinks.map(link => link.url)].join(' ')
-  const ranked = products.map(product => ({
-    product,
-    confidence: scoreProductMatch(product.name, searchable),
-  })).sort((a, b) => b.confidence - a.confidence)
-  const best = ranked[0]
-  const suggestedProductId = best && best.confidence >= 0.78 ? best.product.id : ''
-  const matchConfidence = best?.confidence || 0
+  const match = suggestProductMatch(products, searchable)
+  const suggestedProductId = match.productId
+  const matchConfidence = match.confidence
 
   return uniqueLinks.map((link, index) => ({
     id: (message.id || 'mail') + ':' + index,

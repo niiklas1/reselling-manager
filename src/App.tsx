@@ -2,6 +2,7 @@ import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import type { Session } from '@supabase/supabase-js'
 import AuthScreen from './components/AuthScreen'
 import EbayIntegrationPanel from './components/EbayIntegrationPanel'
+import ShippingCenter, { ShippingTrackingIntegrationPanel } from './components/ShippingCenter'
 import { supabase, CLOUD_RECEIPT_PREFIX, uploadCloudReceipt, downloadCloudReceipt, deleteCloudReceipt } from './lib/supabase'
 import {
   ArrowDownToLine, ArrowUpRight, Bell, Box, ChartNoAxesCombined, ChevronDown,
@@ -45,7 +46,7 @@ type Product = {
   outgoingTrackingNumber?: string
   outgoingTrackingUrl?: string
 }
-type Section = 'Übersicht' | 'Produkte' | 'Verkäufe' | 'Auswertungen' | 'Integrationen' | 'Einstellungen'
+type Section = 'Übersicht' | 'Produkte' | 'Verkäufe' | 'Versand' | 'Auswertungen' | 'Integrationen' | 'Einstellungen'
 
 type InvoiceDraftLine = InvoiceLineItem & {
   selected: boolean
@@ -1330,6 +1331,7 @@ function App() {
     { label: 'Übersicht', icon: LayoutDashboard },
     { label: 'Produkte', icon: Package },
     { label: 'Verkäufe', icon: ShoppingBag },
+    { label: 'Versand', icon: Truck },
     { label: 'Auswertungen', icon: ChartNoAxesCombined },
     { label: 'Integrationen', icon: PlugZap },
   ]
@@ -1420,12 +1422,14 @@ function App() {
           )}
 
           {section === 'Auswertungen' && <section className="panel coming-panel"><div className="coming-icon"><Sparkles size={23}/></div><h2>Auswertungen</h2><p>Hier bauen wir deine Monatsübersichten, Gewinnentwicklung und Plattformvergleiche auf.</p><span className="coming-tag">WIRD ALS NÄCHSTES ERWEITERT</span></section>}
+          {section === 'Versand' && <ShippingCenter accessToken={authSession.access_token} products={products}/>}
           {section === 'Integrationen' && <section className="panel settings-panel integrations-page">
             <div className="settings-intro"><div><span className="overline">VERBUNDENE DIENSTE</span><h2>Integrationen</h2><p>Verbinde externe Plattformen und verwalte Synchronisierung und Datensicherung an einem Ort.</p></div><span className="settings-account-pill">Dein Workspace</span></div>
             <section className="settings-group integration-list">
               <div className="settings-group-heading"><span className="settings-group-icon"><Mail size={17}/></span><div><h3>Plattformen & Dienste</h3><p>Verbindungen für deinen Reselling-Alltag.</p></div></div>
               <EbayIntegrationPanel accessToken={authSession.access_token}/>
               <GmailShippingPanel key={userId || 'signed-out'} products={products} onApply={applyGmailTracking} initialClientId={gmailClientId} initialLearningHints={gmailLearningHints} onSettingsChange={({ clientId, learningHints }) => { setGmailClientId(current => current === clientId ? current : clientId); setGmailLearningHints(current => JSON.stringify(current) === JSON.stringify(learningHints) ? current : learningHints) }}/>
+              <ShippingTrackingIntegrationPanel accessToken={authSession.access_token}/>
             </section>
             <section className="settings-group integration-list">
               <div className="settings-group-heading"><span className="settings-group-icon"><HardDrive size={17}/></span><div><h3>Daten & Sicherung</h3><p>Cloud-Synchronisierung und vollständige Backups.</p></div></div>

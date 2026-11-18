@@ -24,23 +24,25 @@ The application uses Google's browser token flow and the read-only scope https:/
 - Repeated notifications for the same tracking number are deduplicated. The newest useful message for a parcel is retained.
 - Tracking data already attached to a product is excluded from new candidates.
 
-## Three-model AI matching
+## Four-model AI matching
 
-The optional setting "KI-Produktabgleich aktivieren (3-Modelle-Ensemble)" is off by default.
+The optional setting "KI-Produktabgleich aktivieren (4-Modelle-Ensemble)" is off by default.
 
 When enabled, the Cloudflare Worker performs a staged match:
 
 1. **BAAI BGE-M3** creates multilingual embeddings and retrieves plausible product candidates.
-2. **Google EmbeddingGemma 2** independently embeds the same email/product set. Agreement between both embedding models is an additional signal.
-3. **BAAI BGE-Reranker-base** compares the original email excerpt directly with the shortlist of product descriptions. This is a cross-encoder reranking step, not just another cosine-similarity score.
+2. **Google EmbeddingGemma 2** independently embeds the same email/product set, using the documented asymmetric search prefixes.
+3. **Qwen3-Embedding-0.6B** from Alibaba provides a third independent embedding ranking. It adds another cross-model agreement signal for multilingual product names and email text.
+4. **BAAI BGE-Reranker-base** compares the original email excerpt directly with the shortlist of product descriptions. This is a cross-encoder reranking step, not just another cosine-similarity score.
 
-The final score combines reranker relevance, both embedding similarities, distinctive word overlap and purchase/sale timing. A product is suggested only when evidence and the lead over the next candidate pass conservative thresholds. The numeric match score is a ranking score, not a calibrated probability. If model outputs disagree or are weak, the app deliberately leaves the product unassigned.
+The final score combines reranker relevance, the available embedding similarities, distinctive word overlap and purchase/sale timing. When multiple embedding models are available, at least two must place the best product in their top-three results for model agreement. A product is suggested only when evidence and the lead over the next candidate pass conservative thresholds. The numeric match score is a ranking score, not a calibrated probability. If model outputs disagree or are weak, the app deliberately leaves the product unassigned.
 
 The retailer/sender domain is only a secondary retrieval clue. The direct reranker query is the email content itself; a sender brand alone is not sufficient to prove which product was shipped.
 
-Cloudflare documents all three models as hosted by Workers AI with zero data retention. Current published input pricing is approximately:
+Cloudflare documents all four models as hosted by Workers AI with zero data retention. Current published input pricing is approximately:
 - BGE-M3: $0.0118 per million input tokens.
 - EmbeddingGemma 2: $0.0017 per million input tokens.
+- Qwen3-Embedding-0.6B: $0.0118 per million input tokens.
 - BGE-Reranker-base: $0.00311 per million input tokens.
 
 Actual cost depends on the number of candidate messages and product records sent for a search.

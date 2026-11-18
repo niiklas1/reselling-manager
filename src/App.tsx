@@ -7,13 +7,14 @@ import {
   CircleHelp, LayoutDashboard, Menu, Package, Plus, Search, Settings,
   ShoppingBag, SlidersHorizontal, Sparkles, Wallet, X, Trash2, Pencil,
   CalendarDays, Tag, Truck, CheckCircle2, LoaderCircle, DollarSign,
-  Camera, FileText, FileUp, ImagePlus, Moon, Sun, ExternalLink, RefreshCw, HardDrive, Mail
+  Camera, FileText, FileUp, ImagePlus, Moon, Sun, ExternalLink, RefreshCw, HardDrive, Mail, LogOut
 } from 'lucide-react'
 import { readInvoiceSource } from './lib/invoiceSource'
 import type { InvoiceLineItem } from './lib/invoiceScanner'
 import { enrichInvoiceProductNames } from './lib/productLookup'
 import { googleImagesUrl, searchProductImages, type ProductImageResult } from './lib/productImages'
 import { applyLearnedGmailMatch, createGmailLearningHint, mergeGmailLearningHint, rankGmailCandidatesWithAI, scanGmailForTracking, scoreProductMatch, type GmailLearningHint, type GmailTrackingCandidate, type ShippingDirection } from './lib/gmailShipping'
+import { CURRENCY_OPTIONS, convertAmountToEur, fetchEcbReferenceRates, formatBaseAmount, isSupportedCurrency, readCachedExchangeRates, saveCachedExchangeRates, type CurrencyCode, type ExchangeRateSnapshot } from './lib/currency'
 
 type Status = 'Auf Lager' | 'Verkauft'
 const PRODUCT_CATEGORIES = ['Elektronik', 'TCG', 'Alternative'] as const
@@ -59,8 +60,10 @@ const PRODUCTS_STORAGE_KEY = 'reselling-products'
 const RECEIPTS_DB_NAME = 'reselling-manager-local'
 const RECEIPTS_STORE = 'receipts'
 
-let activeCurrency = 'EUR'
-const money = (value: number) => new Intl.NumberFormat('de-DE', { style: 'currency', currency: activeCurrency }).format(value)
+const APP_VERSION = '0.4.1'
+let activeCurrency: CurrencyCode = 'EUR'
+let activeExchangeRates: ExchangeRateSnapshot['rates'] = { EUR: 1 }
+const money = (value: number) => formatBaseAmount(value, activeCurrency, activeExchangeRates)
 const profit = (p: Product) => p.salePrice - p.purchasePrice - p.shipping - p.fees
 
 function splitMoneyAmount(total: number, count: number): number[] {
@@ -580,15 +583,35 @@ function App() {
   const [showHelp, setShowHelp] = useState(false)
   const [backupBusy, setBackupBusy] = useState(false)
   const [pendingBackupFile, setPendingBackupFile] = useState<File | null>(null)
-  const [currency, setCurrency] = useState('EUR')
+  const [currency, setCurrency] = useState<CurrencyCode>('EUR')
+  const [exchangeRates, setExchangeRates] = useState<ExchangeRateSnapshot>(() => readCachedExchangeRates())
+  const [exchangeRatesLoading, setExchangeRatesLoading] = useState(false)
+  const [exchangeRatesError, setExchangeRatesError] = useState('')
   const [receiptProduct, setReceiptProduct] = useState<Product | null>(null)
   const [backupMessage, setBackupMessage] = useState('')
   const backupInput = useRef<HTMLInputElement>(null)
   const [theme, setTheme] = useState<'light' | 'dark'>('dark')
 
   activeCurrency = currency
+  activeExchangeRates = exchangeRates.rates
 
   const userId = authSession?.user.id || null
+
+  async function refreshExchangeRates() {
+    setExchangeRatesLoading(true)
+    setExchangeRatesError('')
+    try {
+      const latest = await fetchEcbReferenceRates()
+      setExchangeRates(latest)
+      saveCachedExchangeRates(latest)
+    } catch (error) {
+      setExchangeRatesError(error instanceof Error ? error.message : 'Wechselkurse konnten nicht aktualisiert werden.')
+    } finally {
+      setExchangeRatesLoading(false)
+    }
+  }
+  useEffect(() => { void refreshExchangeRates() }, [])
+
   currentProductsRef.current = products
   currentSettingsRef.current = { currency, theme, gmailClientId: gmailClientId.trim(), gmailLearningHints }
 
@@ -716,12 +739,12 @@ function App() {
 
       syncedProductsRef.current = loadedProducts
       setProducts(loadedProducts)
-      setCurrency(['EUR', 'USD', 'GBP', 'CHF'].includes(settings.currency) ? settings.currency : 'EUR')
+      setCurrency(isSupportedCurrency(settings.currency) ? settings.currency : 'EUR')
       setTheme(settings.theme === 'light' ? 'light' : 'dark')
       setGmailClientId(typeof settings.gmail_client_id === 'string' ? settings.gmail_client_id : '')
       setGmailLearningHints(loadedHints)
       settingsSnapshotRef.current = JSON.stringify({
-        currency: ['EUR', 'USD', 'GBP', 'CHF'].includes(settings.currency) ? settings.currency : 'EUR',
+        currency: isSupportedCurrency(settings.currency) ? settings.currency : 'EUR',
         theme: settings.theme === 'light' ? 'light' : 'dark',
         gmailClientId: typeof settings.gmail_client_id === 'string' ? settings.gmail_client_id : '',
         gmailLearningHints: loadedHints,
@@ -776,7 +799,7 @@ function App() {
           .maybeSingle()
         if (!active || error || !data) return
         const latestSettings = {
-          currency: ['EUR', 'USD', 'GBP', 'CHF'].includes(data.currency) ? data.currency : 'EUR',
+          currency: isSupportedCurrency(data.currency) ? data.currency : 'EUR',
           theme: data.theme === 'light' ? 'light' as const : 'dark' as const,
           gmailClientId: data.gmail_client_id || '',
           gmailLearningHints: Array.isArray(data.gmail_learning_hints) ? data.gmail_learning_hints as GmailLearningHint[] : [],
@@ -917,7 +940,7 @@ function App() {
         if (!active || error || !data) return
         const hints = Array.isArray(data.gmail_learning_hints) ? data.gmail_learning_hints as GmailLearningHint[] : []
         const nextSettings = {
-          currency: ['EUR', 'USD', 'GBP', 'CHF'].includes(data.currency) ? data.currency : 'EUR',
+          currency: isSupportedCurrency(data.currency) ? data.currency : 'EUR',
           theme: (data.theme === 'light' ? 'light' : 'dark') as 'light' | 'dark',
           gmailClientId: data.gmail_client_id || '',
           gmailLearningHints: hints,
@@ -1337,7 +1360,7 @@ function App() {
           <div className="profile-copy"><strong>{authSession?.user.user_metadata?.full_name || 'Mein Konto'}</strong><span>{authSession?.user.email}</span></div>
           <ChevronDown size={15} className="profile-chevron"/>
         </button>
-        <div className="sidebar-foot">RESSELLMANAGER <span>·</span> V 0.1</div>
+        <div className="sidebar-foot">DEIN RESELLING · DEIN ÜBERBLICK</div>
       </aside>
 
       {mobileNav && <button className="mobile-backdrop" aria-label="Menü schließen" onClick={() => setMobileNav(false)}/>}
@@ -1346,7 +1369,7 @@ function App() {
         <header className="topbar">
           <button className="mobile-menu" onClick={() => setMobileNav(true)}><Menu size={20}/></button>
           <div className="breadcrumbs"><span>Workspace</span><b>/</b><strong>{section}</strong></div>
-          <div className="topbar-right"><span className={'local-status ' + (cloudSyncState === 'error' ? 'cloud-error-status' : '')}><i/>{cloudSyncState === 'saving' ? 'Wird synchronisiert …' : cloudSyncState === 'error' ? 'Sync-Fehler' : 'Cloud synchronisiert'}</span><button className="top-icon" aria-label="Hilfe" title="Hilfe" onClick={() => setShowHelp(true)}><CircleHelp size={18}/></button><button className="theme-toggle" aria-label={theme === 'dark' ? 'Helles Design aktivieren' : 'Dark Mode aktivieren'} title={theme === 'dark' ? 'Helles Design' : 'Dark Mode'} onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}>{theme === 'dark' ? <Sun size={16}/> : <Moon size={16}/>}</button><button className="top-avatar top-avatar-button" onClick={() => setSection(current => current === 'Einstellungen' ? 'Übersicht' : 'Einstellungen')} title="Einstellungen öffnen oder schließen" aria-expanded={section === 'Einstellungen'}>{(authSession?.user.user_metadata?.full_name || authSession?.user.email || 'R').toString().slice(0, 1).toUpperCase()}</button></div>
+          <div className="topbar-right"><span className={`local-status sync-${cloudSyncState}`} role="status" aria-live="polite" title={cloudSyncError || (cloudSyncState === 'saving' ? 'Änderungen werden gespeichert' : cloudSyncState === 'error' ? 'Die letzte Synchronisierung ist fehlgeschlagen' : 'Deine Daten sind in der Cloud gespeichert')}><i aria-hidden="true"/>{cloudSyncState === 'saving' ? 'Synchronisiere …' : cloudSyncState === 'error' ? 'Sync-Fehler' : cloudSyncState === 'idle' ? 'Cloud verbunden' : 'Cloud aktuell'}</span><button className="top-icon" aria-label="Hilfe" title="Hilfe" onClick={() => setShowHelp(true)}><CircleHelp size={18}/></button><button className="theme-toggle" aria-label={theme === 'dark' ? 'Helles Design aktivieren' : 'Dark Mode aktivieren'} title={theme === 'dark' ? 'Helles Design' : 'Dark Mode'} onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}>{theme === 'dark' ? <Sun size={16}/> : <Moon size={16}/>}</button><button className="top-avatar top-avatar-button" onClick={() => setSection(current => current === 'Einstellungen' ? 'Übersicht' : 'Einstellungen')} title="Einstellungen öffnen oder schließen" aria-expanded={section === 'Einstellungen'}>{(authSession?.user.user_metadata?.full_name || authSession?.user.email || 'R').toString().slice(0, 1).toUpperCase()}</button></div>
         </header>
 
         <div className="page-wrap">
@@ -1394,32 +1417,34 @@ function App() {
 
           {section === 'Auswertungen' && <section className="panel coming-panel"><div className="coming-icon"><Sparkles size={23}/></div><h2>Auswertungen</h2><p>Hier bauen wir deine Monatsübersichten, Gewinnentwicklung und Plattformvergleiche auf.</p><span className="coming-tag">WIRD ALS NÄCHSTES ERWEITERT</span></section>}
           {section === 'Einstellungen' && <section className="panel settings-panel">
-            <div className="panel-title-row"><div><h2>Dein Konto</h2><p>Deine Daten werden privat gespeichert und mit deinen Geräten synchronisiert.</p></div></div>
-            <div className="setting-row"><div><strong>Angemeldet als</strong><span>{authSession?.user.email}</span></div><span className="setting-pill">Google-Konto</span></div>
-            <GmailShippingPanel
-              key={userId || 'signed-out'}
-              products={products}
-              onApply={applyGmailTracking}
-              initialClientId={gmailClientId}
-              initialLearningHints={gmailLearningHints}
-              onSettingsChange={({ clientId, learningHints }) => {
-                setGmailClientId(current => current === clientId ? current : clientId)
-                setGmailLearningHints(current => JSON.stringify(current) === JSON.stringify(learningHints) ? current : learningHints)
-              }}
-            />
-            <div className="setting-row"><div><strong>Cloud-Synchronisierung</strong><span>{cloudSyncState === 'saving' ? 'Änderungen werden sicher in deinem Konto gespeichert.' : cloudSyncState === 'error' ? 'Die letzte Synchronisierung ist fehlgeschlagen. Bitte Verbindung prüfen und erneut versuchen.' : 'Produkte, Verkäufe und Einstellungen sind auf allen angemeldeten Geräten verfügbar.'}</span></div><span className="setting-pill">{cloudSyncState === 'saving' ? 'Speichert …' : cloudSyncState === 'error' ? 'Fehler' : 'Aktiv'}</span></div>
-            <div className="setting-row"><div><strong>Belege</strong><span>Original-PDFs und Bilder liegen in deinem privaten Cloud-Speicher. Zugriff haben nur du und deine Sitzung.</span></div><span className="setting-pill">Privat</span></div>
-            <div className="backup-section"><div className="backup-heading"><div><strong>Vollständiges PDF-Backup</strong><span>Sichere Produkte, Einstellungen und sämtliche Originalbelege in einer einzigen PDF-Datei. Die Wiederherstellungsdaten sind in der PDF eingebettet.</span></div><HardDrive size={20}/></div><div className="backup-actions"><button className="button-primary" onClick={() => void createBackup()} disabled={backupBusy}><ArrowDownToLine size={15}/>{backupBusy ? 'PDF wird erstellt …' : 'PDF-Backup erstellen'}</button><button className="button-secondary" onClick={() => backupInput.current?.click()} disabled={backupBusy}><FileUp size={15}/> PDF / Backup importieren</button><input ref={backupInput} type="file" accept=".pdf,application/pdf,.zip,application/zip,.json,application/json,application/octet-stream" hidden onChange={e => void restoreBackup(e.target.files?.[0])}/></div>{pendingBackupFile && <div className="backup-actions"><button className="button-primary" onClick={() => void shareBackupFile()}><ArrowUpRight size={15}/> PDF in Dateien sichern / teilen</button><button className="button-secondary" onClick={downloadBackupFile}><ArrowDownToLine size={15}/> PDF herunterladen</button></div>}{backupMessage && <p className="backup-message" role="status">{backupMessage}</p>}<small>Beim Wiederherstellen werden die Produkte und Belege in dein angemeldetes Konto importiert. Das PDF-Backup bleibt zusätzlich eine unabhängige Sicherung.</small></div>
-            <div className="setting-row"><div><strong>Währung</strong><span>Wähle die Währung, in der Beträge angezeigt werden. Zahlenwerte werden dabei nicht umgerechnet.</span></div><select className="currency-select" value={currency} onChange={e => setCurrency(e.target.value)} aria-label="Anzeigewährung"><option value="EUR">Euro (€)</option><option value="USD">US-Dollar ($)</option><option value="GBP">Britisches Pfund (£)</option><option value="CHF">Schweizer Franken (CHF)</option></select></div>
-            <div className="setting-row"><div><strong>Erscheinungsbild</strong><span>Zwischen dem dunklen Neon-Look und dem hellen Design wechseln.</span></div><button className="setting-toggle" onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}>{theme === 'dark' ? <Sun size={15}/> : <Moon size={15}/>} {theme === 'dark' ? 'Helles Design' : 'Dark Mode'}</button></div>
-            <div className="setting-row"><div><strong>Abmelden</strong><span>Deine Cloud-Daten bleiben erhalten. Auf diesem Gerät wird deine Sitzung beendet.</span></div><button className="button-ghost" onClick={() => void signOut()}>Aus Google-Konto abmelden</button></div>
-            <div className="setting-row"><div><strong>App-Version</strong><span>Reselling Manager – Cloud Edition</span></div><span className="setting-pill">0.4.0</span></div>
+            <div className="settings-intro"><div><span className="overline">WORKSPACE & KONTO</span><h2>Einstellungen</h2><p>Verwalte Integrationen, Datensicherung und persönliche Anzeigeoptionen.</p></div><span className="settings-account-pill">Google-Konto</span></div>
+            <div className="setting-row settings-account-row"><div><strong>Angemeldet als</strong><span>{authSession?.user.email}</span></div><span className="setting-pill">Privater Workspace</span></div>
+            <section className="settings-group">
+              <div className="settings-group-heading"><span className="settings-group-icon"><Mail size={17}/></span><div><h3>Integrationen</h3><p>Optionale Verbindungen zu externen Diensten.</p></div></div>
+              <GmailShippingPanel key={userId || 'signed-out'} products={products} onApply={applyGmailTracking} initialClientId={gmailClientId} initialLearningHints={gmailLearningHints} onSettingsChange={({ clientId, learningHints }) => { setGmailClientId(current => current === clientId ? current : clientId); setGmailLearningHints(current => JSON.stringify(current) === JSON.stringify(learningHints) ? current : learningHints) }}/>
+            </section>
+            <section className="settings-group">
+              <div className="settings-group-heading"><span className="settings-group-icon"><HardDrive size={17}/></span><div><h3>Daten & Sicherung</h3><p>Dein Bestand wird privat gespeichert und auf deinen Geräten abgeglichen.</p></div></div>
+              <div className="setting-row"><div><strong>Cloud-Synchronisierung</strong><span>{cloudSyncState === 'saving' ? 'Änderungen werden gerade sicher in deinem Konto gespeichert.' : cloudSyncState === 'error' ? 'Die letzte Synchronisierung ist fehlgeschlagen. Bitte prüfe die Verbindung.' : 'Produkte, Verkäufe und Einstellungen sind auf allen angemeldeten Geräten verfügbar.'}</span></div><span className={`setting-pill sync-pill sync-${cloudSyncState}`}>{cloudSyncState === 'saving' ? 'Speichert …' : cloudSyncState === 'error' ? 'Fehler' : cloudSyncState === 'idle' ? 'Verbunden' : 'Aktuell'}</span></div>
+              <div className="setting-row"><div><strong>Originalbelege</strong><span>PDFs und Bilder liegen in deinem privaten Cloud-Speicher. Nur dein Konto kann darauf zugreifen.</span></div><span className="setting-pill">Privat</span></div>
+              <div className="backup-section"><div className="backup-heading"><div><strong>Vollständiges Backup</strong><span>Sichere Produkte, Einstellungen und Originalbelege in einer PDF-Datei. Die Wiederherstellungsdaten sind darin eingebettet.</span></div><HardDrive size={20}/></div><div className="backup-actions"><button className="button-primary" onClick={() => void createBackup()} disabled={backupBusy}><ArrowDownToLine size={15}/>{backupBusy ? 'PDF wird erstellt …' : 'PDF-Backup erstellen'}</button><button className="button-secondary" onClick={() => backupInput.current?.click()} disabled={backupBusy}><FileUp size={15}/> Backup importieren</button><input ref={backupInput} type="file" accept=".pdf,application/pdf,.zip,application/zip,.json,application/json,application/octet-stream" hidden onChange={e => void restoreBackup(e.target.files?.[0])}/></div>{pendingBackupFile && <div className="backup-actions"><button className="button-primary" onClick={() => void shareBackupFile()}><ArrowUpRight size={15}/> PDF in Dateien sichern / teilen</button><button className="button-secondary" onClick={downloadBackupFile}><ArrowDownToLine size={15}/> PDF herunterladen</button></div>}{backupMessage && <p className="backup-message" role="status">{backupMessage}</p>}<small>Beim Wiederherstellen werden Produkte und Belege in dein angemeldetes Konto importiert. Das PDF bleibt eine unabhängige Sicherung.</small></div>
+            </section>
+            <section className="settings-group">
+              <div className="settings-group-heading"><span className="settings-group-icon"><SlidersHorizontal size={17}/></span><div><h3>Darstellung & Währung</h3><p>Deine Anzeigeoptionen werden mit deinem Konto synchronisiert.</p></div></div>
+              <div className="setting-row"><div><strong>Anzeigewährung</strong><span>Deine Beträge werden intern in EUR gespeichert und für die Anzeige umgerechnet.</span></div><select className="currency-select" value={currency} onChange={e => setCurrency(e.target.value as CurrencyCode)} aria-label="Anzeigewährung">{CURRENCY_OPTIONS.map(option => <option key={option.code} value={option.code} disabled={option.code !== 'EUR' && !exchangeRates.rates[option.code]}>{option.label} ({option.code})</option>)}</select></div>
+              <div className="fx-rate-row"><span>{exchangeRates.date ? `EZB-Referenzkurse · Stand ${new Date(exchangeRates.date + 'T12:00:00').toLocaleDateString('de-DE')}` : 'EZB-Referenzkurse werden geladen'}{exchangeRatesLoading ? ' · Aktualisierung läuft …' : ''}</span><button type="button" className="button-secondary fx-refresh-button" onClick={() => void refreshExchangeRates()} disabled={exchangeRatesLoading}><RefreshCw size={14} className={exchangeRatesLoading ? 'spin' : ''}/> Kurse aktualisieren</button></div>
+              {exchangeRatesError && <p className="fx-rate-error" role="status">{exchangeRatesError} {exchangeRates.date ? 'Der zuletzt gespeicherte Kurs bleibt verfügbar.' : 'Bis zur Verbindung werden Beträge in EUR angezeigt.'}</p>}
+              {currency !== 'EUR' && !exchangeRates.rates[currency] && <p className="fx-rate-error" role="status">Für {currency} ist aktuell kein Wechselkurs auf diesem Gerät vorhanden. Die Anzeige bleibt bis zum Kursabruf in EUR.</p>}
+              <p className="fx-disclaimer">EZB-Referenzkurse dienen zur Orientierung. Bank-, Karten- und Plattformgebühren können abweichen.</p>
+              <div className="setting-row"><div><strong>Erscheinungsbild</strong><span>Wechsle zwischen dunklem und hellem Design.</span></div><button className="setting-toggle" onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}>{theme === 'dark' ? <Sun size={15}/> : <Moon size={15}/>} {theme === 'dark' ? 'Helles Design' : 'Dark Mode'}</button></div>
+            </section>
+            <section className="settings-group settings-account-group"><div className="settings-group-heading"><span className="settings-group-icon"><Settings size={17}/></span><div><h3>Konto</h3><p>Beende die Sitzung auf diesem Gerät. Deine Cloud-Daten bleiben erhalten.</p></div></div><div className="setting-row settings-signout-row"><div><strong>Abmelden</strong><span>Du kannst dich jederzeit wieder mit Google anmelden.</span></div><button className="button-ghost" onClick={() => void signOut()}><LogOut size={15}/> Abmelden</button></div></section>
           </section>}
-          <footer className="page-footer">Reselling Manager <span>·</span> Einfach den Überblick behalten.</footer>
+          <footer className="page-footer"><span className="footer-brand">Reselling Manager</span><span>·</span>Einfach den Überblick behalten.<small>Version {APP_VERSION}</small></footer>
         </div>
       </main>
 
-      {showForm && <ProductModal product={editing} onClose={() => {setShowForm(false);setEditing(null)}} onSave={saveProduct}/>}
+      {showForm && <ProductModal product={editing} onClose={() => {setShowForm(false);setEditing(null)}} onSave={saveProduct} exchangeRates={exchangeRates}/>}
       {selling && <SaleModal product={selling} onClose={() => setSelling(null)} onSave={saveSale}/>}
       {showHelp && <HelpModal onClose={() => setShowHelp(false)}/>}
       {receiptProduct && <ReceiptModal product={receiptProduct} onClose={() => setReceiptProduct(null)}/>}
@@ -1579,15 +1604,17 @@ function SaleModal({ product, onClose, onSave }: {
   </form></div>
 }
 
-function ProductModal({ product, onClose, onSave }: {
+function ProductModal({ product, onClose, onSave, exchangeRates }: {
   product: Product | null
   onClose: () => void
   onSave: (products: Product[], invoiceFile?: File | null) => Promise<boolean>
+  exchangeRates: ExchangeRateSnapshot
 }) {
   const [name, setName] = useState(product?.name || '')
   const [category, setCategory] = useState<ProductCategory | ''>(product?.category || '')
   const [platform, setPlatform] = useState(product?.platform || '')
   const [purchasePrice, setPurchasePrice] = useState(product?.purchasePrice.toString() || '')
+  const [purchaseCurrency, setPurchaseCurrency] = useState<CurrencyCode>('EUR')
   const [purchaseDate, setPurchaseDate] = useState(product?.purchaseDate || new Date().toISOString().slice(0,10))
   const [quantity, setQuantity] = useState(String(product?.quantity || 1))
   const [imageUrl, setImageUrl] = useState(product?.imageUrl || '')
@@ -1618,7 +1645,10 @@ function ProductModal({ product, onClose, onSave }: {
   const fileInput = useRef<HTMLInputElement>(null)
   const selectedLines = invoiceLines.filter(line => line.selected)
   const selectedLineTotal = selectedLines.reduce((sum, line) => sum + Number(line.amount || 0), 0)
+  const selectedLineTotalEur = convertAmountToEur(selectedLineTotal, purchaseCurrency, exchangeRates)
   const selectedLineQuantity = selectedLines.reduce((sum, line) => sum + Math.max(1, Number(line.quantity || 1)), 0)
+  const purchasePriceInEur = convertAmountToEur(Number(purchasePrice || 0), purchaseCurrency, exchangeRates)
+  const availableCurrencies = CURRENCY_OPTIONS.filter(option => option.code === 'EUR' || Boolean(exchangeRates.rates[option.code]))
 
   useEffect(() => {
     let objectUrl = ''
@@ -1761,8 +1791,8 @@ function ProductModal({ product, onClose, onSave }: {
   function submit(e: React.FormEvent) {
     e.preventDefault()
     if (invoiceLines.length > 0) {
-      if (!selectedLines.length || selectedLines.some(line => !line.description.trim() || Number(line.quantity) < 1 || Number(line.amount) <= 0)) return
-    } else if (!name.trim() || purchasePrice === '' || !Number.isFinite(Number(purchasePrice)) || Number(quantity) < 1) {
+      if (!selectedLines.length || !exchangeRates.rates[purchaseCurrency] || selectedLines.some(line => !line.description.trim() || Number(line.quantity) < 1 || Number(line.amount) <= 0)) return
+    } else if (!name.trim() || purchasePrice === '' || !Number.isFinite(Number(purchasePrice)) || !exchangeRates.rates[purchaseCurrency] || Number(quantity) < 1) {
       return
     }
 
@@ -1790,7 +1820,7 @@ function ProductModal({ product, onClose, onSave }: {
       products = selectedLines.flatMap(line => {
         const count = Math.max(1, Math.floor(Number(line.quantity) || 1))
         const groupId = crypto.randomUUID()
-        const unitPrices = splitMoneyAmount(Number(line.amount || 0), count)
+        const unitPrices = splitMoneyAmount(convertAmountToEur(Number(line.amount || 0), purchaseCurrency, exchangeRates), count)
         return Array.from({ length: count }, (_, index) => ({
           id: crypto.randomUUID(),
           groupId,
@@ -1813,7 +1843,7 @@ function ProductModal({ product, onClose, onSave }: {
         groupId: product.groupId || product.id,
         name: name.trim(),
         ...common,
-        purchasePrice: Number(purchasePrice),
+        purchasePrice: purchasePriceInEur,
         quantity: 1,
         imageUrl,
         imageAttribution,
@@ -1822,7 +1852,7 @@ function ProductModal({ product, onClose, onSave }: {
     } else {
       const count = Math.max(1, Math.floor(Number(quantity) || 1))
       const groupId = crypto.randomUUID()
-      const unitPrices = splitMoneyAmount(Number(purchasePrice), count)
+      const unitPrices = splitMoneyAmount(purchasePriceInEur, count)
       products = Array.from({ length: count }, (_, index) => ({
         id: crypto.randomUUID(),
         groupId,
@@ -1863,12 +1893,13 @@ function ProductModal({ product, onClose, onSave }: {
     </div>
     {showForm && <form onSubmit={submit}><div className="form-grid">
       {invoiceLines.length > 0 ? <div className="invoice-lines-panel full">
+        <div className="invoice-currency-row"><label className="field"><span>Währung auf dem Beleg</span><select value={purchaseCurrency} onChange={e => setPurchaseCurrency(e.target.value as CurrencyCode)}>{availableCurrencies.map(option => <option key={option.code} value={option.code}>{option.code} · {option.label}</option>)}</select></label><span>Erkannte Beträge werden mit dem EZB-Referenzkurs in EUR umgerechnet.</span></div>
         <div className="invoice-lines-heading"><div><strong>{invoiceLines.length} erkannte Positionen</strong><small>Sichere Positionen sind vorausgewählt. Unsichere Erkennungen musst du aktiv auswählen. Prüfe Namen, Stückzahl und Gesamtpreis je Position.</small></div><span>{selectedLines.length} ausgewählt</span></div>
         {invoiceLines.map(line => <div className="invoice-line-card" key={line.id}>
           <div className="invoice-line-top"><input type="checkbox" checked={line.selected} onChange={e => updateInvoiceLine(line.id,{selected:e.target.checked})}/><input className="invoice-line-name" value={line.description} onChange={e => updateInvoiceLine(line.id,{description:e.target.value})} aria-label="Artikelname"/><span className={line.productVerification === 'name' ? 'invoice-confidence review' : line.confidence >= 0.72 ? 'invoice-confidence good' : 'invoice-confidence review'}>{line.productVerification === 'barcode' ? 'EAN bestätigt' : line.productVerification === 'name' ? 'Katalogtreffer prüfen' : line.confidence >= 0.72 ? 'Sicher' : 'Bitte prüfen'} · {Math.round(line.confidence * 100)}%</span></div>
           <div className="invoice-line-bottom">
             <label><span>Stück</span><input type="number" min="1" step="1" value={line.quantity} onChange={e => updateInvoiceLine(line.id,{quantity:Number(e.target.value)})}/></label>
-            <label><span>Gesamtpreis (€)</span><input type="number" min="0" step="0.01" value={line.amount} onChange={e => updateInvoiceLine(line.id,{amount:Number(e.target.value)})}/></label>
+            <label><span>Gesamtpreis ({purchaseCurrency})</span><input type="number" min="0" step="0.01" value={line.amount} onChange={e => updateInvoiceLine(line.id,{amount:Number(e.target.value)})}/></label>
             <div className="invoice-line-image">
               {line.imageUrl ? <img src={line.imageUrl} alt={line.description}/> : <span className="invoice-line-no-image"><ImagePlus size={16}/></span>}
               <div><small>{line.imageAttribution ? 'Bild: ' + line.imageAttribution : line.imageLoading ? 'Bild wird gesucht …' : 'Kein Bild gefunden'}</small><button type="button" onClick={() => void toggleLineImageOptions(line)}>{line.showImageOptions ? 'Auswahl schließen' : 'Bild ändern'}</button></div>
@@ -1879,11 +1910,13 @@ function ProductModal({ product, onClose, onSave }: {
             <a href={googleImagesUrl(line.description)} target="_blank" rel="noreferrer">Google Bilder öffnen <ExternalLink size={12}/></a>
           </div>}
         </div>)}
-        <div className="invoice-lines-total"><span>Ausgewählte Artikel · {selectedLineQuantity} Stück</span><strong>{money(selectedLineTotal)}</strong></div>
+        <div className="invoice-lines-total"><span>Ausgewählte Artikel · {selectedLineQuantity} Stück</span><strong>{money(selectedLineTotalEur)}</strong></div>
       </div> : <>
         <label className="field full"><span>Produktname *</span><input autoFocus required value={name} onChange={e=>setName(e.target.value)} onBlur={() => { if (name.trim() && !imageUrl && !imageBusy) void loadImages(name) }} placeholder="z. B. Pokémon ETB – Hidden Fates"/></label>
         <label className="field"><span>{product ? 'Einzelstück' : 'Stückzahl *'}</span><input required type="number" min="1" step="1" disabled={Boolean(product)} value={product ? '1' : quantity} onChange={e=>setQuantity(e.target.value)}/></label>
-        <label className="field"><span>{product ? 'Einkaufspreis dieses Exemplars (€) *' : 'Einkaufspreis gesamt (€) *'}</span><input required type="number" min="0" step="0.01" value={purchasePrice} onChange={e=>setPurchasePrice(e.target.value)} placeholder="0,00"/></label>
+        <label className="field"><span>{product ? `Einkaufspreis dieses Exemplars (${purchaseCurrency}) *` : `Einkaufspreis gesamt (${purchaseCurrency}) *`}</span><input required type="number" min="0" step="0.01" inputMode="decimal" value={purchasePrice} onChange={e=>setPurchasePrice(e.target.value)} placeholder="0,00"/></label>
+        <label className="field"><span>Einkaufswährung</span><select value={purchaseCurrency} onChange={e=>setPurchaseCurrency(e.target.value as CurrencyCode)}>{availableCurrencies.map(option => <option key={option.code} value={option.code}>{option.code} · {option.label}</option>)}</select></label>
+        {purchaseCurrency !== 'EUR' && purchasePrice !== '' && <p className="currency-preview full" role="status">Wird gespeichert als {formatBaseAmount(purchasePriceInEur, 'EUR', exchangeRates.rates)} · EZB-Referenzkurs vom {exchangeRates.date ? new Date(exchangeRates.date + 'T12:00:00').toLocaleDateString('de-DE') : 'letzten verfügbaren Banktag'}</p>}
         <div className="form-section full"><span>PRODUKTBILD</span></div>
         <div className="image-picker full">
           {imageUrl ? <div className="selected-image"><img src={imageUrl} alt="Automatisch gewähltes Produktbild"/><div><strong>Automatisches Produktbild</strong><small>{imageAttribution ? 'Bildnachweis: ' + imageAttribution : 'Bild automatisch gewählt'}{imageLicense ? ' · ' + imageLicense : ''}</small><button type="button" onClick={() => {setImageUrl('');setImageAttribution('');setImageLicense('')}}>Entfernen</button></div></div> : <div className="image-empty"><ImagePlus size={18}/><span>{imageError || 'Das Produktbild wird automatisch gesucht.'}</span></div>}
@@ -2097,11 +2130,12 @@ function GmailShippingPanel({ products, onApply, initialClientId, initialLearnin
       : 'Versanddaten wurden dem Produkt zugeordnet. Für eine sichere Lernregel enthielt der Betreff zu wenige eindeutige Produktmerkmale.')
   }
 
-  return <section className="gmail-panel">
-    <div className="gmail-panel-heading"><div><span className="gmail-panel-icon"><Mail size={17}/></span><div><strong>Gmail-Versandimport</strong><p>Versandbestätigungen finden und eingehende oder ausgehende Trackingdaten einem Produkt zuordnen.</p></div></div><span className="gmail-readonly">Nur lesen</span></div>
+  return <details className="gmail-panel">
+    <summary className="gmail-panel-heading"><div><span className="gmail-panel-icon"><Mail size={17}/></span><div><strong>Gmail-Versandimport</strong><p>Versandbestätigungen erkennen und Trackingdaten passenden Produkten zuordnen.</p></div></div><span className="gmail-readonly">Optional · nur lesen</span><ChevronDown size={16} className="gmail-chevron"/></summary>
+    <div className="gmail-panel-content">
     <div className="gmail-setup">
       <label className="field"><span>Google OAuth Client-ID</span><input value={clientId} onChange={event => setClientId(event.target.value)} placeholder="123456789-abc.apps.googleusercontent.com" autoComplete="off" spellCheck={false}/></label>
-      <small>Einmalig: Gmail API in Google Cloud aktivieren, OAuth-Einwilligungsbildschirm einrichten, OAuth-Client vom Typ „Webanwendung“ erstellen und diese oben angezeigte Website-Adresse als autorisierten JavaScript-Ursprung eintragen. Danach nur die Client-ID hier einfügen. Kein Client Secret nötig; Zugriff nur lesend.</small>
+      <small>Nur nötig, wenn du Versandbestätigungen direkt aus Gmail importieren möchtest. Der Zugriff ist ausschließlich lesend; dein Supabase-Login bleibt davon getrennt.</small>
       <label className="gmail-ai-toggle">
         <input type="checkbox" checked={aiMatching} onChange={event => setAiMatching(event.target.checked)}/>
         <span><strong>KI-Produktabgleich aktivieren (4-Modelle-Ensemble)</strong><small>Optional: BGE-M3, Google EmbeddingGemma 2 und Qwen3 suchen unabhängig semantisch passende Produkte; BGE-Reranker prüft die besten Kandidaten direkt gegeneinander. Nur minimierte Textausschnitte, Absender-Domain und Produktdaten gehen an Cloudflare Workers AI. Deine bestätigten Betreff-/Absender-Zuordnungen lernt die App zusätzlich lokal. Die Vorschläge bleiben prüfpflichtig.</small></span>
@@ -2123,8 +2157,9 @@ function GmailShippingPanel({ products, onApply, initialClientId, initialLearnin
         <div className="gmail-candidate-actions"><label className="field"><span>Produkt zuordnen</span><select value={candidate.suggestedProductId} onChange={event => setCandidates(current => current.map(item => item.id === candidate.id ? { ...item, suggestedProductId: event.target.value, matchSource: event.target.value ? 'Manuell' : undefined, matchReason: undefined } : item))}><option value="">Produkt auswählen …</option>{products.map(product => <option key={product.id} value={product.id}>{product.name} · {product.status}</option>)}</select></label><label className="field"><span>Versandrichtung</span><select value={candidate.direction} onChange={event => setCandidates(current => current.map(item => item.id === candidate.id ? { ...item, direction: event.target.value as ShippingDirection } : item))}><option value="incoming">Eingehend · Einkauf</option><option value="outgoing">Ausgehend · Verkauf</option></select></label><button type="button" className="button-primary" onClick={() => applyCandidate(candidate)} disabled={!candidate.suggestedProductId}>Übernehmen</button><button type="button" className="button-ghost" onClick={() => setCandidates(current => current.filter(item => item.id !== candidate.id))}>Verwerfen</button></div>
       </article>)}
     </div>}
-    <small className="gmail-privacy">Gmail wird nur lesend durchsucht. Ohne aktivierte KI bleibt die E-Mail-Auswertung im Browser; bestätigte Lernregeln werden mit deinem Konto synchronisiert. Bei aktivierter KI werden minimierte Textausschnitte und Produktdaten an Cloudflare Workers AI gesendet und dort mit bis zu drei Modellen abgeglichen. Der kurzlebige Gmail-Token wird nur zur Zugriffsprüfung verwendet und nicht gespeichert. Treffer werden nie ohne deine Bestätigung einem Produkt zugeordnet.</small>
-  </section>
+    <small className="gmail-privacy">Gmail wird nur lesend durchsucht. Ohne aktivierte KI bleibt die Auswertung im Browser; bestätigte Lernregeln werden synchronisiert. Bei aktivierter KI gehen minimierte Textausschnitte und Produktdaten an Cloudflare Workers AI. Der kurzlebige Gmail-Token wird nicht gespeichert. Kein Treffer wird ohne deine Bestätigung übernommen.</small>
+    </div>
+  </details>
 }
 
 function HelpModal({ onClose }: { onClose: () => void }) {

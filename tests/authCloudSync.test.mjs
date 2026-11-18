@@ -71,3 +71,21 @@ test('Google OAuth setup documents the stable Preview origin and allow-list entr
   assert.match(docs, /https:\/\/feature-google-auth-cloud-sync-reselling-manager\.j6c2njff5r\.workers\.dev/)
   assert.match(docs, /Additional Redirect URLs/)
 })
+
+
+test('settings are grouped, Gmail is collapsible and sign-out is the last account action', () => {
+ const app = read('src/App.tsx')
+ assert.match(app, /<details className="gmail-panel">/)
+ assert.match(app, /settings-signout-row/)
+ assert.match(app, /Version \\{APP_VERSION\\}/)
+})
+test('sync status is truthful, accessible and respects reduced-motion preferences', () => {
+ const app = read('src/App.tsx')
+ const css = read('src/index.css')
+ assert.match(app, /sync-\\$\\{cloudSyncState\\}/)
+ assert.match(app, /aria-live="polite"/)
+ assert.match(css, /prefers-reduced-motion:reduce/)
+})
+
+test('settings are grouped, Gmail is collapsible and sign-out is the last account action',()=>{const app=read('src/App.tsx');assert.match(app,/<details className="gmail-panel">/);assert.match(app,/settings-signout-row/);assert.match(app,/Version \\{APP_VERSION\\}/)})
+test('sync status is truthful, accessible and respects reduced motion',()=>{const app=read('src/App.tsx');const css=read('src/index.css');assert.match(app,/sync-\\$\\{cloudSyncState\\}/);assert.match(app,/aria-live="polite"/);assert.match(css,/prefers-reduced-motion:reduce/)})

@@ -139,7 +139,7 @@ function gemmaVectors(rawValue: unknown, expectedCount: number): number[][] {
   return indexed.every(row => row.length > 0 && row.every(Number.isFinite)) ? indexed : []
 }
 
-function qwenVectors(rawValue: unknown, expectedCount: number): number[][] {
+export function qwenVectors(rawValue: unknown, expectedCount: number): number[][] {
   if (!rawValue || typeof rawValue !== 'object') return []
   const raw = rawValue as { data?: unknown; shape?: number[] }
   const values = raw.data

@@ -159,11 +159,11 @@ async function matchShippingProducts(request: Request, env: Env): Promise<Respon
   if (!verification.ok) return jsonResponse({ error: 'Die Gmail-Berechtigung ist abgelaufen. Bitte verbinde Gmail erneut.' }, 401)
   if (!(await allowAiRequest(token))) return jsonResponse({ error: 'Zu viele KI-Abgleiche in kurzer Zeit. Bitte versuche es später erneut.' }, 429)
 
-  const contentLength = Number(request.headers.get('Content-Length') || 0)
-  if (contentLength > 140000) return jsonResponse({ error: 'Die KI-Anfrage ist zu groß. Bitte reduziere die Anzahl der Treffer.' }, 413)
+  const rawBody = await request.text()
+  if (rawBody.length > 140000) return jsonResponse({ error: 'Die KI-Anfrage ist zu groß. Bitte reduziere die Anzahl der Treffer.' }, 413)
   let body: { candidates?: MatchCandidate[]; products?: MatchProduct[] }
   try {
-    body = await request.json() as typeof body
+    body = JSON.parse(rawBody) as typeof body
   } catch {
     return jsonResponse({ error: 'Die KI-Anfrage enthält kein gültiges JSON.' }, 400)
   }

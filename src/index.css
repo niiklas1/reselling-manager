@@ -611,7 +611,7 @@ body{background:#f1eff8}
 :root[data-theme="dark"] .settings-group-icon{background:#2d2548;color:#d0baff}:root[data-theme="dark"] .settings-panel .backup-section{background:#191e34;border-color:#393653}
 :root[data-theme="dark"] .settings-panel .backup-heading span,:root[data-theme="dark"] .fx-rate-row>span,:root[data-theme="dark"] .fx-disclaimer{color:#a2a8c2}
 :root[data-theme="dark"] .settings-signout-row button{background:#2b202e;border-color:#573947;color:#ffb8c7}
-:root[data-theme="dark"] .gmail-panel{background:#151a2e;border-color:#393653}:root[data-theme="dark"] .gmail-panel-heading strong{color:#e8e5f5}:root[data-theme="dark"] .gmail-panel-heading p{color:#a1a8c0}
+:root[data-theme="dark"] .gmail-panel{background:#151a2e;border-color:#393653}:root[data-theme="dark"] .integration-list .gmail-panel:last-child{border-bottom-color:#393653}:root[data-theme="dark"] .gmail-panel-heading strong{color:#e8e5f5}:root[data-theme="dark"] .gmail-panel-heading p{color:#a1a8c0}
 :root[data-theme="dark"] .gmail-panel[open] .gmail-panel-heading{border-color:#393653}
 :root[data-theme="dark"] .currency-preview{background:#183a34;border-color:#2e5948;color:#9de3c1}:root[data-theme="dark"] .fx-rate-error{background:#3b2c25;color:#ffc59e}
 @media(max-width:480px){.settings-panel .setting-row{flex-direction:column}.settings-panel .setting-row>div{min-width:0}.settings-panel .currency-select{width:100%}.settings-signout-row button{width:100%}.page-footer{font-size:9px}}
@@ -624,7 +624,7 @@ body{background:#f1eff8}
 
 /* Visual refinement: a quieter, more cohesive interface. */
 body{background:#f6f7f9}
-.brand-symbol{background:#2f4058;color:#fff;box-shadow:none}
+.brand-symbol{background:linear-gradient(135deg,#7654f0 0%,#b45de4 58%,#ef78b0 100%);color:#fff;box-shadow:0 5px 18px rgba(173,91,220,.25)}
 .brand{color:#263448}
 .brand-muted{color:#8791a0}
 .nav-link.selected{background:#eef1f5;color:#34465f}
@@ -641,8 +641,9 @@ body{background:#f6f7f9}
 .topbar-right{gap:11px}
 .top-icon,.theme-toggle{width:36px;height:36px;min-width:36px;min-height:36px;flex:0 0 36px;border-radius:10px}
 .top-icon{background:transparent;color:#778394}
-.top-avatar-button,.topbar-right .top-avatar-button{width:36px;height:36px;min-width:36px;min-height:36px;flex:0 0 36px;aspect-ratio:1;border-radius:50%;padding:0;line-height:1;background:#edf0f4;border:1px solid #dfe4eb;color:#34465f;box-shadow:none}
-.topbar-right .top-avatar-button:hover{background:#e4e9ef;border-color:#d2dbe6}
+.top-avatar-button,.topbar-right .top-avatar-button{width:36px;height:36px;min-width:36px;min-height:36px;flex:0 0 36px;aspect-ratio:1;border-radius:50%;padding:0;line-height:1;background:linear-gradient(140deg,#f4eaff,#ffe8f2);border:1px solid #eddff6;color:#7548bc;box-shadow:0 3px 10px rgba(173,91,220,.12)}
+.profile-avatar{background:linear-gradient(140deg,#f4eaff,#ffe8f2);border:1px solid #eddff6;color:#7548bc;box-shadow:0 3px 10px rgba(173,91,220,.12)}
+.topbar-right .top-avatar-button:hover{background:linear-gradient(140deg,#eee2ff,#ffdfef);border-color:#d8c4ef}
 .profile-card{margin-top:13px;padding:13px 8px 10px;border-top:1px solid #eceff3;border-radius:10px}
 .profile-card:hover{background:#f5f6f8}
 .profile-copy{min-width:0;flex:1}
@@ -653,7 +654,7 @@ body{background:#f6f7f9}
 .page-footer .footer-separator{color:#b4bbc5;font-size:12px;line-height:1}
 .page-footer small{margin:0;padding:0;border:0;color:#9aa3af;font-size:9px;font-weight:500}
 :root[data-theme="dark"] body{background:#111528}
-:root[data-theme="dark"] .brand-symbol{background:#394761;box-shadow:none}
+:root[data-theme="dark"] .brand-symbol{background:linear-gradient(135deg,#7654f0 0%,#b45de4 58%,#ef78b0 100%);box-shadow:0 5px 22px rgba(189,101,227,.28)}
 :root[data-theme="dark"] .brand{color:#eef0f7}
 :root[data-theme="dark"] .brand-muted{color:#9aa4b8}
 :root[data-theme="dark"] .nav-link.selected{background:#252d43;color:#e7ebf4}
@@ -667,8 +668,8 @@ body{background:#f6f7f9}
 :root[data-theme="dark"] .theme-toggle{background:#252d43;color:#cbd5e5}
 :root[data-theme="dark"] .theme-toggle:hover,:root[data-theme="dark"] .top-icon:hover{background:#303b54;color:#fff}
 :root[data-theme="dark"] .top-icon{color:#aeb8ca}
-:root[data-theme="dark"] .top-avatar-button,:root[data-theme="dark"] .topbar-right .top-avatar-button{background:#283149;border-color:#3a4760;color:#edf1f8}
-:root[data-theme="dark"] .topbar-right .top-avatar-button:hover{background:#33415d;border-color:#536580}
+:root[data-theme="dark"] .profile-avatar,:root[data-theme="dark"] .top-avatar-button,:root[data-theme="dark"] .topbar-right .top-avatar-button{background:linear-gradient(135deg,#55408d 0%,#87449f 58%,#b95791 100%);border-color:#895bb0;color:#fff0fb;box-shadow:0 5px 18px rgba(166,87,199,.24)}
+:root[data-theme="dark"] .topbar-right .top-avatar-button:hover{background:linear-gradient(135deg,#624b9f 0%,#9850ad 58%,#c5659d 100%);border-color:#a16bc6}
 :root[data-theme="dark"] .profile-card{border-color:#2b3348}
 :root[data-theme="dark"] .profile-card:hover{background:#1b2235}
 :root[data-theme="dark"] .page-footer{color:#929cb1}
@@ -766,8 +767,9 @@ body{background:#f6f7f9}
 .backup-integration-panel>.backup-section{padding:0 0 15px;border:0;margin:0}
 .backup-integration-panel .backup-heading{padding-top:3px}
 .backup-integration-panel .backup-heading>svg{display:none}
-.integration-list>.gmail-panel{margin-top:5px}
-.integration-list .gmail-panel:last-child{border-bottom:0}
+.integration-list>.gmail-panel{margin-top:10px}
+/* Keep the full outline on the final accordion card as well. */
+.integration-list .gmail-panel:last-child{border-bottom:1px solid #e8e5f0}
 .integrations-page .settings-group{margin-top:22px}
 .integrations-page .settings-group-heading{margin-bottom:10px}
 :root[data-theme="dark"] .integration-status.is-connected{background:#1f342e;border-color:#335344;color:#9cc7aa}

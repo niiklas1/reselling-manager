@@ -21,6 +21,8 @@ export type MatchableProduct = {
   purchaseDate?: string
   saleDate?: string
   status?: string
+  incomingTrackingUrl?: string
+  outgoingTrackingUrl?: string
 }
 
 type GmailMessageRef = { id: string; threadId?: string }
@@ -216,7 +218,7 @@ function parseMessage(message: GmailMessage, products: MatchableProduct[]): Gmai
     return new DOMParser().parseFromString(html, 'text/html').body?.textContent || ''
   }).join('\n')
   const searchableText = [combinedText, htmlText, message.snippet || ''].join('\n')
-  const links = extractLinks(bodies.html.join('\n'), [combinedText, htmlText].join('\n'))
+  const links = extractLinks(bodies.html.join('\n'), [combinedText, htmlText, message.snippet || ''].join('\n'))
   const validLinks = links.map(link => {
     const url = unwrapTrackingUrl(link.url)
     return { url, label: link.label, carrier: identifyCarrier(url) }
@@ -277,6 +279,8 @@ export async function scanGmailForTracking(
     }))
     messages.push(...fetched)
   }
+  const existingUrls = new Set(products.flatMap(product => [product.incomingTrackingUrl, product.outgoingTrackingUrl]).filter((value): value is string => Boolean(value)))
   return messages.flatMap(message => parseMessage(message, products))
+    .filter(candidate => !existingUrls.has(candidate.trackingUrl))
     .sort((a, b) => b.date.localeCompare(a.date))
 }

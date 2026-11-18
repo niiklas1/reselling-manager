@@ -1229,7 +1229,6 @@ async function shippingSync(request: Request, env: Env): Promise<Response> {
 
     const pending = desiredRows.filter(row => !row.provider_registered && !row.tracking_error)
     let registered = 0
-    const rejectedNumbers = new Set<string>()
     const acceptedIds = new Set<string>()
     for (let offset = 0; offset < pending.length; offset += 40) {
       const batch = pending.slice(offset, offset + 40)
@@ -1264,7 +1263,6 @@ async function shippingSync(request: Request, env: Env): Promise<Response> {
               tracking_error: null,
             })
           } else {
-            rejectedNumbers.add(row.id)
             await updateShippingTracking(env, row.id, {
               tracking_error: trackingString(item.error?.message, 400) || '17TRACK konnte die Sendungsnummer nicht registrieren.',
             })

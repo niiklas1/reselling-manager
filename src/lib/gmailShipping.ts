@@ -169,7 +169,7 @@ function resemblesUnsafeTrackingHost(rawUrl: string): boolean {
     const url = new URL(rawUrl)
     const host = url.hostname.toLowerCase()
     if (url.protocol !== 'https:' || url.username || url.password || !host || host === 'localhost' || host.endsWith('.local') || host.startsWith('[')) return true
-    if (/^(?:127\.|10\.|192\.168\.|172\.(?:1[6-9]|2\\d|3[01])\.)/.test(host) || /^\\d{1,3}(?:\.\\d{1,3}){3}$/.test(host)) return true
+    if (/^(?:127\.|10\.|192\.168\.|172\.(?:1[6-9]|2\d|3[01])\.)/.test(host) || /^\d{1,3}(?:\.\d{1,3}){3}$/.test(host)) return true
     return resemblesCarrierSpoof(host)
   } catch {
     return true

@@ -3,6 +3,13 @@ interface Env {
   AI: {
     run(model: string, input: Record<string, unknown>): Promise<unknown>
   }
+  SUPABASE_URL?: string
+  SUPABASE_PUBLISHABLE_KEY?: string
+  SUPABASE_SECRET_KEY?: string
+  EBAY_CLIENT_ID?: string
+  EBAY_CLIENT_SECRET?: string
+  EBAY_RU_NAME?: string
+  EBAY_TOKEN_ENCRYPTION_KEY?: string
 }
 
 type MatchCandidate = {
@@ -409,7 +416,624 @@ async function matchShippingProducts(request: Request, env: Env): Promise<Respon
   })
 }
 
+
+// eBay OAuth and account sync. All refresh tokens remain encrypted in Supabase;
+// eBay credentials and the encryption key are Cloudflare Worker secrets.
+const EBAY_SCOPES = [
+  'https://api.ebay.com/oauth/api_scope/sell.listing.read',
+  'https://api.ebay.com/oauth/api_scope/sell.fulfillment.readonly',
+]
+const EBAY_GRAPHQL_URL = 'https://graphqlapi.ebay.com/graphql'
+const EBAY_ORDERS_URL = 'https://api.ebay.com/sell/fulfillment/v1/order'
+const EBAY_MARKETPLACE = 'EBAY_DE'
+
+type EbayConnectionRow = {
+  user_id: string
+  refresh_token_ciphertext: string
+  refresh_token_iv: string
+  refresh_token_expires_at: string | null
+  scopes: string[]
+  connected_at: string
+  last_sync_at: string | null
+  last_sync_error: string | null
+}
+type EbayTokenResponse = {
+  access_token: string
+  expires_in: number
+  refresh_token?: string
+  refresh_token_expires_in?: number
+}
+type EbayListingRow = {
+  user_id: string
+  external_listing_id: string
+  title: string
+  marketplace: string
+  status: 'ACTIVE' | 'ENDED' | 'SCHEDULED' | 'SOLD' | 'UNKNOWN'
+  listing_format: string | null
+  price: number | null
+  currency: string | null
+  quantity_available: number | null
+  quantity_sold: number | null
+  listing_url: string
+  started_at: string | null
+  ended_at: string | null
+  last_synced_at: string
+}
+type EbayOrder = {
+  orderId?: string
+  creationDate?: string
+  orderFulfillmentStatus?: string
+  lineItems?: Array<{
+    lineItemId?: string
+    legacyItemId?: string
+    title?: string
+    quantity?: number
+    lineItemCost?: { value?: string | number; currency?: string }
+  }>
+}
+
+function ebayJson(value: unknown, status = 200): Response {
+  return new Response(JSON.stringify(value), {
+    status,
+    headers: {
+      'Content-Type': 'application/json; charset=utf-8',
+      'Cache-Control': 'no-store',
+      'X-Content-Type-Options': 'nosniff',
+    },
+  })
+}
+
+function getSupabaseConfig(env: Env) {
+  const url = env.SUPABASE_URL || 'https://uuvffkcxgxarfaecwjiz.supabase.co'
+  const publishableKey = env.SUPABASE_PUBLISHABLE_KEY || ''
+  const secretKey = env.SUPABASE_SECRET_KEY || ''
+  if (!publishableKey || !secretKey) {
+    throw new Error('Supabase-Backend-Schlüssel fehlen in den Cloudflare Worker Secrets.')
+  }
+  return { url, publishableKey, secretKey }
+}
+
+async function getAuthenticatedEbayUser(request: Request, env: Env): Promise<{ id: string } | null> {
+  const authorization = request.headers.get('Authorization') || ''
+  const accessToken = authorization.replace(/^Bearer\s+/i, '').trim()
+  if (accessToken.length < 20 || accessToken.length > 10000) return null
+  const config = getSupabaseConfig(env)
+  const response = await fetch(config.url + '/auth/v1/user', {
+    headers: {
+      apikey: config.publishableKey,
+      Authorization: 'Bearer ' + accessToken,
+      Accept: 'application/json',
+    },
+  })
+  if (!response.ok) return null
+  const user = await response.json() as { id?: string }
+  return typeof user.id === 'string' ? { id: user.id } : null
+}
+
+async function supabaseAdminRequest(env: Env, path: string, init: RequestInit = {}): Promise<Response> {
+  const config = getSupabaseConfig(env)
+  const headers = new Headers(init.headers)
+  headers.set('apikey', config.secretKey)
+  headers.set('Accept', 'application/json')
+  if (init.body && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json')
+  return fetch(config.url + '/rest/v1/' + path, { ...init, headers })
+}
+
+async function supabaseAdminJson<T>(env: Env, path: string, init: RequestInit = {}): Promise<T> {
+  const response = await supabaseAdminRequest(env, path, init)
+  if (!response.ok) {
+    const detail = (await response.text()).slice(0, 600)
+    throw new Error('Supabase-Datenbankfehler (' + response.status + '): ' + detail)
+  }
+  if (response.status === 204) return undefined as T
+  const raw = await response.text()
+  return (raw ? JSON.parse(raw) : undefined) as T
+}
+
+async function sha256Hex(value: string): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value))
+  return [...new Uint8Array(digest)].map(byte => byte.toString(16).padStart(2, '0')).join('')
+}
+
+function decodeBase64(value: string): Uint8Array {
+  const binary = atob(value)
+  return Uint8Array.from(binary, character => character.charCodeAt(0))
+}
+function encodeBase64(value: ArrayBuffer | Uint8Array): string {
+  const bytes = value instanceof Uint8Array ? value : new Uint8Array(value)
+  let binary = ''
+  for (const byte of bytes) binary += String.fromCharCode(byte)
+  return btoa(binary)
+}
+async function getEbayEncryptionKey(env: Env): Promise<CryptoKey> {
+  const encoded = env.EBAY_TOKEN_ENCRYPTION_KEY || ''
+  if (!encoded) throw new Error('Der eBay-Verschlüsselungsschlüssel fehlt in den Cloudflare Worker Secrets.')
+  const raw = decodeBase64(encoded)
+  if (raw.length !== 32) throw new Error('EBAY_TOKEN_ENCRYPTION_KEY muss ein Base64-kodierter 32-Byte-Schlüssel sein.')
+  return crypto.subtle.importKey('raw', raw, 'AES-GCM', false, ['encrypt', 'decrypt'])
+}
+async function encryptEbayRefreshToken(value: string, env: Env): Promise<{ ciphertext: string; iv: string }> {
+  const key = await getEbayEncryptionKey(env)
+  const iv = crypto.getRandomValues(new Uint8Array(12))
+  const ciphertext = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, new TextEncoder().encode(value))
+  return { ciphertext: encodeBase64(ciphertext), iv: encodeBase64(iv) }
+}
+async function decryptEbayRefreshToken(row: EbayConnectionRow, env: Env): Promise<string> {
+  const key = await getEbayEncryptionKey(env)
+  const plaintext = await crypto.subtle.decrypt(
+    { name: 'AES-GCM', iv: decodeBase64(row.refresh_token_iv) },
+    key,
+    decodeBase64(row.refresh_token_ciphertext),
+  )
+  return new TextDecoder().decode(plaintext)
+}
+function ebayConfiguration(env: Env) {
+  const clientId = env.EBAY_CLIENT_ID || ''
+  const clientSecret = env.EBAY_CLIENT_SECRET || ''
+  const ruName = env.EBAY_RU_NAME || ''
+  if (!clientId || !clientSecret || !ruName) {
+    throw new Error('eBay ist noch nicht vollständig eingerichtet. Es fehlen Client ID, Client Secret oder RuName als Cloudflare Worker Secrets.')
+  }
+  return { clientId, clientSecret, ruName }
+}
+function createRandomState(): string {
+  return encodeBase64(crypto.getRandomValues(new Uint8Array(32)))
+    .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '')
+}
+async function readEbayConnection(userId: string, env: Env): Promise<EbayConnectionRow | null> {
+  const rows = await supabaseAdminJson<EbayConnectionRow[]>(
+    env,
+    'ebay_connections?select=*&user_id=eq.' + encodeURIComponent(userId) + '&limit=1',
+  )
+  return rows[0] || null
+}
+async function saveEbayConnection(env: Env, row: Record<string, unknown>): Promise<void> {
+  await supabaseAdminJson(env, 'ebay_connections?on_conflict=user_id', {
+    method: 'POST',
+    headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
+    body: JSON.stringify(row),
+  })
+}
+async function updateEbaySyncStatus(userId: string, env: Env, values: Record<string, unknown>): Promise<void> {
+  await supabaseAdminJson(
+    env,
+    'ebay_connections?user_id=eq.' + encodeURIComponent(userId),
+    { method: 'PATCH', body: JSON.stringify({ ...values, updated_at: new Date().toISOString() }) },
+  )
+}
+
+async function ebayConnect(request: Request, env: Env): Promise<Response> {
+  const user = await getAuthenticatedEbayUser(request, env)
+  if (!user) return ebayJson({ error: 'Bitte melde dich im Reselling Manager erneut an.' }, 401)
+  try {
+    const { clientId, ruName } = ebayConfiguration(env)
+    // Validate encryption and database configuration before redirecting.
+    await getEbayEncryptionKey(env)
+    const state = createRandomState()
+    await supabaseAdminJson(env, 'ebay_oauth_states', {
+      method: 'POST',
+      headers: { Prefer: 'return=minimal' },
+      body: JSON.stringify({
+        user_id: user.id,
+        state_hash: await sha256Hex(state),
+        expires_at: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
+      }),
+    })
+    const target = new URL('https://auth.ebay.com/oauth2/authorize')
+    target.searchParams.set('client_id', clientId)
+    target.searchParams.set('response_type', 'code')
+    target.searchParams.set('redirect_uri', ruName)
+    target.searchParams.set('scope', EBAY_SCOPES.join(' '))
+    target.searchParams.set('state', state)
+    target.searchParams.set('locale', 'de-DE')
+    return ebayJson({ authorizationUrl: target.toString() })
+  } catch (error) {
+    return ebayJson({ error: error instanceof Error ? error.message : 'eBay-Verbindung konnte nicht gestartet werden.' }, 503)
+  }
+}
+
+async function exchangeEbayAuthorizationCode(code: string, env: Env): Promise<EbayTokenResponse> {
+  const { clientId, clientSecret, ruName } = ebayConfiguration(env)
+  const response = await fetch('https://api.ebay.com/identity/v1/oauth2/token', {
+    method: 'POST',
+    headers: {
+      Authorization: 'Basic ' + btoa(clientId + ':' + clientSecret),
+      'Content-Type': 'application/x-www-form-urlencoded',
+      Accept: 'application/json',
+    },
+    body: new URLSearchParams({
+      grant_type: 'authorization_code',
+      code,
+      redirect_uri: ruName,
+    }).toString(),
+  })
+  const raw = await response.text()
+  if (!response.ok) throw new Error('eBay-Tokenaustausch fehlgeschlagen (' + response.status + '): ' + raw.slice(0, 300))
+  const token = JSON.parse(raw) as EbayTokenResponse
+  if (!token.access_token || !token.refresh_token) throw new Error('eBay hat kein gültiges Refresh-Token zurückgegeben.')
+  return token
+}
+
+async function ebayOAuthCallback(request: Request, env: Env): Promise<Response> {
+  const url = new URL(request.url)
+  const state = url.searchParams.get('state') || ''
+  const code = url.searchParams.get('code') || ''
+  const denied = url.searchParams.get('error')
+  const appUrl = new URL('/', url.origin)
+  if (denied) {
+    appUrl.searchParams.set('ebay', 'declined')
+    return Response.redirect(appUrl.toString(), 302)
+  }
+  if (!state || !code || state.length > 300 || code.length > 2048) {
+    appUrl.searchParams.set('ebay', 'error')
+    return Response.redirect(appUrl.toString(), 302)
+  }
+  try {
+    const stateHash = await sha256Hex(state)
+    const rows = await supabaseAdminJson<Array<{ id: string; user_id: string; expires_at: string }>>(
+      env,
+      'ebay_oauth_states?select=id,user_id,expires_at&state_hash=eq.' + encodeURIComponent(stateHash) + '&limit=1',
+    )
+    const pending = rows[0]
+    if (!pending || Date.parse(pending.expires_at) < Date.now()) {
+      appUrl.searchParams.set('ebay', 'error')
+      return Response.redirect(appUrl.toString(), 302)
+    }
+    // Consume state before exchanging the one-use authorization code.
+    await supabaseAdminJson(env, 'ebay_oauth_states?id=eq.' + encodeURIComponent(pending.id), { method: 'DELETE' })
+    const token = await exchangeEbayAuthorizationCode(code, env)
+    const encrypted = await encryptEbayRefreshToken(token.refresh_token!, env)
+    await saveEbayConnection(env, {
+      user_id: pending.user_id,
+      refresh_token_ciphertext: encrypted.ciphertext,
+      refresh_token_iv: encrypted.iv,
+      refresh_token_expires_at: new Date(Date.now() + Number(token.refresh_token_expires_in || 47304000) * 1000).toISOString(),
+      scopes: EBAY_SCOPES,
+      connected_at: new Date().toISOString(),
+      last_sync_error: null,
+      updated_at: new Date().toISOString(),
+    })
+    appUrl.searchParams.set('ebay', 'connected')
+  } catch {
+    appUrl.searchParams.set('ebay', 'error')
+  }
+  return Response.redirect(appUrl.toString(), 302)
+}
+
+async function refreshEbayAccessToken(row: EbayConnectionRow, env: Env): Promise<{ accessToken: string; updatedRefreshToken?: string }> {
+  const { clientId, clientSecret } = ebayConfiguration(env)
+  const refreshToken = await decryptEbayRefreshToken(row, env)
+  const response = await fetch('https://api.ebay.com/identity/v1/oauth2/token', {
+    method: 'POST',
+    headers: {
+      Authorization: 'Basic ' + btoa(clientId + ':' + clientSecret),
+      'Content-Type': 'application/x-www-form-urlencoded',
+      Accept: 'application/json',
+    },
+    body: new URLSearchParams({ grant_type: 'refresh_token', refresh_token: refreshToken }).toString(),
+  })
+  const raw = await response.text()
+  if (!response.ok) throw new Error('eBay-Zugriffstoken konnte nicht erneuert werden (' + response.status + '). Bitte verbinde eBay erneut.')
+  const token = JSON.parse(raw) as EbayTokenResponse
+  if (!token.access_token) throw new Error('eBay hat kein gültiges Zugriffstoken zurückgegeben.')
+  return { accessToken: token.access_token, updatedRefreshToken: token.refresh_token }
+}
+
+async function ebayGraphql<T>(accessToken: string, query: string): Promise<T> {
+  const response = await fetch(EBAY_GRAPHQL_URL, {
+    method: 'POST',
+    headers: {
+      Authorization: 'Bearer ' + accessToken,
+      'X-EBAY-C-MARKETPLACE-ID': EBAY_MARKETPLACE,
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+    },
+    body: JSON.stringify({ query }),
+  })
+  const payload = await response.json() as { data?: T; errors?: Array<{ message?: string }> }
+  if (!response.ok || payload.errors?.length || !payload.data) {
+    const detail = payload.errors?.map(item => item.message).filter(Boolean).join('; ') || ('HTTP ' + response.status)
+    throw new Error('eBay Listing API: ' + detail.slice(0, 400))
+  }
+  return payload.data
+}
+
+async function searchEbayListingIds(accessToken: string): Promise<Array<{ id: string; status: string }>> {
+  const query = [
+    'query sellerListingSearch {',
+    ' activeListings(searchInput: { pagination: { maxPageSize: 50 } }) { ... on SellerListings { listings { listingId } pagination { totalElements } } }',
+    ' endedListings(searchInput: { pagination: { maxPageSize: 50 } }) { ... on SellerListings { listings { listingId } pagination { totalElements } } }',
+    ' scheduledListings(searchInput: { pagination: { maxPageSize: 50 } }) { ... on SellerListings { listings { listingId } pagination { totalElements } } }',
+    '}',
+  ].join('\n')
+  const data = await ebayGraphql<{
+    sellerListingSearch?: {
+      activeListings?: { listings?: Array<{ listingId?: string }> }
+      endedListings?: { listings?: Array<{ listingId?: string }> }
+      scheduledListings?: { listings?: Array<{ listingId?: string }> }
+    }
+  }>(accessToken, query)
+  const result = data.sellerListingSearch
+  if (!result) throw new Error('eBay hat keine Listing-Suchergebnisse zurückgegeben.')
+  const byId = new Map<string, string>()
+  for (const [status, group] of [
+    ['ACTIVE', result.activeListings],
+    ['ENDED', result.endedListings],
+    ['SCHEDULED', result.scheduledListings],
+  ] as const) {
+    for (const item of group?.listings || []) {
+      const id = String(item.listingId || '')
+      if (/^\d{8,20}$/.test(id)) byId.set(id, status)
+    }
+  }
+  return [...byId.entries()].map(([id, status]) => ({ id, status })).slice(0, 100)
+}
+
+function buildEbayListingDetailQuery(listingId: string, includePrice: 'direct' | 'original' | 'none'): string {
+  const priceSelection = includePrice === 'direct'
+    ? 'fixedPrice { value currency }'
+    : includePrice === 'original'
+      ? 'fixedPrice { original { value currency } }'
+      : ''
+  const itemsSelection = priceSelection
+    ? 'listingItems { items { itemTerms { pricingTerms { ' + priceSelection + ' } availability { quantityAvailable } } } }'
+    : ''
+  return [
+    'query SellerListings {',
+    ' sellerListings(input: { listings: [{ listingId: "' + listingId + '" }] }) {',
+    '  listings { ... on ListingSuccess {',
+    '   listingId',
+    '   listing {',
+    '    listingId marketplace sellerProduct { title }',
+    '    listingTerms { listingFormat lifecycleTerms { listingStatus startAt actualEndAt } totalQuantityAvailable }',
+    itemsSelection ? '    ' + itemsSelection : '',
+    '   }',
+    '  } }',
+    ' }',
+    '}',
+  ].filter(Boolean).join('\n')
+}
+
+function moneyFromListing(value: any): { price: number | null; currency: string | null; quantity: number | null } {
+  const items = Array.isArray(value?.listingItems?.items) ? value.listingItems.items : []
+  const prices: Array<{ price: number; currency: string }> = []
+  let quantity = 0
+  for (const item of items) {
+    const terms = item?.itemTerms || {}
+    const amount = terms?.pricingTerms?.fixedPrice
+    const numeric = Number(amount?.value ?? amount?.original?.value)
+    const currency = String(amount?.currency || amount?.original?.currency || '')
+    if (Number.isFinite(numeric) && currency) prices.push({ price: numeric, currency })
+    const available = Number(terms?.availability?.quantityAvailable)
+    if (Number.isFinite(available)) quantity += available
+  }
+  const currencies = [...new Set(prices.map(value => value.currency))]
+  const currency = currencies.length === 1 ? currencies[0] : null
+  const price = prices.length && currency
+    ? prices.reduce((sum, value) => sum + value.price, 0) / prices.length
+    : null
+  return { price, currency, quantity: items.length ? quantity : null }
+}
+
+async function getEbayListingDetail(accessToken: string, id: string, searchStatus: string): Promise<EbayListingRow | null> {
+  let data: any
+  let listing: any
+  let lastError: unknown
+  for (const mode of ['direct', 'original', 'none'] as const) {
+    try {
+      data = await ebayGraphql<any>(accessToken, buildEbayListingDetailQuery(id, mode))
+      const result = data?.sellerListings?.listings?.[0]
+      listing = result?.listing
+      if (listing) break
+    } catch (error) {
+      lastError = error
+    }
+  }
+  if (!listing) {
+    if (lastError) throw lastError
+    return null
+  }
+  const lifecycle = listing.listingTerms?.lifecycleTerms || {}
+  const status = String(lifecycle.listingStatus || searchStatus || 'UNKNOWN').toUpperCase()
+  const amount = moneyFromListing(listing)
+  const available = Number(listing.listingTerms?.totalQuantityAvailable)
+  return {
+    user_id: '',
+    external_listing_id: id,
+    title: String(listing.sellerProduct?.title || 'eBay-Angebot'),
+    marketplace: String(listing.marketplace || EBAY_MARKETPLACE),
+    status: ['ACTIVE', 'ENDED', 'SCHEDULED'].includes(status) ? status as EbayListingRow['status'] : searchStatus as EbayListingRow['status'],
+    listing_format: String(listing.listingTerms?.listingFormat || '') || null,
+    price: amount.price,
+    currency: amount.currency,
+    quantity_available: Number.isFinite(available) ? available : amount.quantity,
+    quantity_sold: null,
+    listing_url: 'https://www.ebay.de/itm/' + id,
+    started_at: typeof lifecycle.startAt === 'string' ? lifecycle.startAt : null,
+    ended_at: typeof lifecycle.actualEndAt === 'string' ? lifecycle.actualEndAt : null,
+    last_synced_at: new Date().toISOString(),
+  }
+}
+
+async function getEbayOrders(accessToken: string, since: Date): Promise<EbayOrder[]> {
+  const from = since.toISOString().replace(/\.\d{3}Z$/, '.000Z')
+  const to = new Date().toISOString().replace(/\.\d{3}Z$/, '.000Z')
+  const all: EbayOrder[] = []
+  for (let offset = 0; offset < 1000; offset += 200) {
+    const target = new URL(EBAY_ORDERS_URL)
+    target.searchParams.set('limit', '200')
+    target.searchParams.set('offset', String(offset))
+    target.searchParams.set('filter', 'creationdate:[' + from + '..' + to + ']')
+    const response = await fetch(target, {
+      headers: { Authorization: 'Bearer ' + accessToken, Accept: 'application/json' },
+    })
+    const raw = await response.text()
+    if (!response.ok) throw new Error('eBay-Bestellungen konnten nicht gelesen werden (' + response.status + '): ' + raw.slice(0, 300))
+    const payload = JSON.parse(raw) as { orders?: EbayOrder[]; total?: number }
+    const orders = Array.isArray(payload.orders) ? payload.orders : []
+    all.push(...orders)
+    if (!orders.length || orders.length < 200 || all.length >= Number(payload.total || 0)) break
+  }
+  return all
+}
+
+async function syncEbayUser(userId: string, env: Env): Promise<{ listings: number; orders: number }> {
+  const connection = await readEbayConnection(userId, env)
+  if (!connection) throw new Error('Kein eBay-Konto verbunden.')
+  const refreshed = await refreshEbayAccessToken(connection, env)
+  if (refreshed.updatedRefreshToken) {
+    const encrypted = await encryptEbayRefreshToken(refreshed.updatedRefreshToken, env)
+    await saveEbayConnection(env, {
+      user_id: userId,
+      refresh_token_ciphertext: encrypted.ciphertext,
+      refresh_token_iv: encrypted.iv,
+      updated_at: new Date().toISOString(),
+    })
+  }
+
+  const listingIds = await searchEbayListingIds(refreshed.accessToken)
+  const listingRows: EbayListingRow[] = []
+  for (let index = 0; index < listingIds.length; index += 5) {
+    const group = await Promise.all(listingIds.slice(index, index + 5).map(async item => {
+      try { return await getEbayListingDetail(refreshed.accessToken, item.id, item.status) }
+      catch { return null }
+    }))
+    for (const listing of group) if (listing) {
+      listing.user_id = userId
+      listingRows.push(listing)
+    }
+  }
+  if (listingRows.length) {
+    await supabaseAdminJson(env, 'ebay_listings?on_conflict=user_id,external_listing_id', {
+      method: 'POST',
+      headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
+      body: JSON.stringify(listingRows),
+    })
+  }
+
+  const orderStart = connection.last_sync_at
+    ? new Date(Math.max(Date.parse(connection.last_sync_at) - 7 * 86400000, Date.now() - 90 * 86400000))
+    : new Date(Date.now() - 90 * 86400000)
+  const orders = await getEbayOrders(refreshed.accessToken, orderStart)
+  const orderRows = orders.flatMap(order => (order.lineItems || []).map(line => {
+    const id = String(line.legacyItemId || '')
+    const amount = Number(line.lineItemCost?.value)
+    return {
+      user_id: userId,
+      external_order_id: String(order.orderId || ''),
+      line_item_id: String(line.lineItemId || line.legacyItemId || ''),
+      external_listing_id: /^\d{8,20}$/.test(id) ? id : null,
+      title: String(line.title || 'eBay-Verkauf'),
+      quantity: Math.max(1, Number(line.quantity || 1)),
+      amount: Number.isFinite(amount) ? amount : null,
+      currency: String(line.lineItemCost?.currency || '').slice(0, 3) || null,
+      order_status: String(order.orderFulfillmentStatus || ''),
+      sold_at: order.creationDate || null,
+      last_synced_at: new Date().toISOString(),
+    }
+  })).filter(row => row.external_order_id && row.line_item_id)
+  if (orderRows.length) {
+    await supabaseAdminJson(env, 'ebay_orders?on_conflict=user_id,external_order_id,line_item_id', {
+      method: 'POST',
+      headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
+      body: JSON.stringify(orderRows),
+    })
+  }
+  const soldByListing = new Map<string, number>()
+  for (const order of orderRows) {
+    if (order.external_listing_id) {
+      soldByListing.set(order.external_listing_id, (soldByListing.get(order.external_listing_id) || 0) + order.quantity)
+    }
+  }
+  for (const [listingId, quantity] of soldByListing) {
+    await supabaseAdminJson(env, 'ebay_listings?user_id=eq.' + encodeURIComponent(userId) + '&external_listing_id=eq.' + encodeURIComponent(listingId), {
+      method: 'PATCH',
+      body: JSON.stringify({ quantity_sold: quantity, last_synced_at: new Date().toISOString() }),
+    })
+  }
+
+  await updateEbaySyncStatus(userId, env, {
+    last_sync_at: new Date().toISOString(),
+    last_sync_error: null,
+  })
+  return { listings: listingRows.length, orders: orderRows.length }
+}
+
+async function ebayStatus(request: Request, env: Env): Promise<Response> {
+  const user = await getAuthenticatedEbayUser(request, env)
+  if (!user) return ebayJson({ error: 'Bitte melde dich im Reselling Manager erneut an.' }, 401)
+  try {
+    const connection = await readEbayConnection(user.id, env)
+    return ebayJson({
+      connected: Boolean(connection),
+      connectedAt: connection?.connected_at || null,
+      lastSyncAt: connection?.last_sync_at || null,
+      lastSyncError: connection?.last_sync_error || null,
+    })
+  } catch (error) {
+    return ebayJson({ error: error instanceof Error ? error.message : 'eBay-Status konnte nicht gelesen werden.' }, 503)
+  }
+}
+
+async function ebayListings(request: Request, env: Env): Promise<Response> {
+  const user = await getAuthenticatedEbayUser(request, env)
+  if (!user) return ebayJson({ error: 'Bitte melde dich im Reselling Manager erneut an.' }, 401)
+  try {
+    const rows = await supabaseAdminJson<EbayListingRow[]>(
+      env,
+      'ebay_listings?select=external_listing_id,title,marketplace,status,listing_format,price,currency,quantity_available,quantity_sold,listing_url,started_at,ended_at,last_synced_at&user_id=eq.' + encodeURIComponent(user.id) + '&order=last_synced_at.desc&limit=250',
+    )
+    const orders = await supabaseAdminJson<any[]>(
+      env,
+      'ebay_orders?select=external_order_id,line_item_id,external_listing_id,title,quantity,amount,currency,order_status,sold_at&user_id=eq.' + encodeURIComponent(user.id) + '&order=sold_at.desc&limit=100',
+    )
+    return ebayJson({ listings: rows, orders })
+  } catch (error) {
+    return ebayJson({ error: error instanceof Error ? error.message : 'eBay-Daten konnten nicht gelesen werden.' }, 503)
+  }
+}
+
+async function ebaySync(request: Request, env: Env): Promise<Response> {
+  const user = await getAuthenticatedEbayUser(request, env)
+  if (!user) return ebayJson({ error: 'Bitte melde dich im Reselling Manager erneut an.' }, 401)
+  try {
+    const result = await syncEbayUser(user.id, env)
+    return ebayJson({ ok: true, ...result, syncedAt: new Date().toISOString() })
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'eBay-Synchronisierung fehlgeschlagen.'
+    try { await updateEbaySyncStatus(user.id, env, { last_sync_error: message.slice(0, 500) }) } catch { /* keep original error */ }
+    return ebayJson({ error: message }, 502)
+  }
+}
+
+async function ebayDisconnect(request: Request, env: Env): Promise<Response> {
+  const user = await getAuthenticatedEbayUser(request, env)
+  if (!user) return ebayJson({ error: 'Bitte melde dich im Reselling Manager erneut an.' }, 401)
+  try {
+    await supabaseAdminJson(env, 'ebay_connections?user_id=eq.' + encodeURIComponent(user.id), { method: 'DELETE' })
+    await supabaseAdminJson(env, 'ebay_oauth_states?user_id=eq.' + encodeURIComponent(user.id), { method: 'DELETE' })
+    return ebayJson({ ok: true })
+  } catch (error) {
+    return ebayJson({ error: error instanceof Error ? error.message : 'eBay konnte nicht getrennt werden.' }, 503)
+  }
+}
+
 export default {
+  async scheduled(_controller: ScheduledController, env: Env): Promise<void> {
+    if (!env.EBAY_CLIENT_ID || !env.EBAY_CLIENT_SECRET || !env.EBAY_RU_NAME ||
+        !env.EBAY_TOKEN_ENCRYPTION_KEY || !env.SUPABASE_SECRET_KEY) return
+    const rows = await supabaseAdminJson<EbayConnectionRow[]>(
+      env,
+      'ebay_connections?select=user_id,refresh_token_ciphertext,refresh_token_iv,refresh_token_expires_at,scopes,connected_at,last_sync_at,last_sync_error&limit=250',
+    )
+    for (const row of rows) {
+      try { await syncEbayUser(row.user_id, env) }
+      catch (error) {
+        const message = error instanceof Error ? error.message : 'eBay-Synchronisierung fehlgeschlagen.'
+        try { await updateEbaySyncStatus(row.user_id, env, { last_sync_error: message.slice(0, 500) }) } catch { /* isolate users */ }
+      }
+    }
+  },
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url)
     const origin = request.headers.get('Origin')
@@ -427,6 +1051,24 @@ export default {
       })
     }
 
+    if (url.pathname === '/api/ebay/callback' && request.method === 'GET') {
+      return ebayOAuthCallback(request, env)
+    }
+    if (url.pathname === '/api/ebay/status' && request.method === 'GET') {
+      return ebayStatus(request, env)
+    }
+    if (url.pathname === '/api/ebay/connect' && request.method === 'POST') {
+      return ebayConnect(request, env)
+    }
+    if (url.pathname === '/api/ebay/sync' && request.method === 'POST') {
+      return ebaySync(request, env)
+    }
+    if (url.pathname === '/api/ebay/listings' && request.method === 'GET') {
+      return ebayListings(request, env)
+    }
+    if (url.pathname === '/api/ebay/disconnect' && request.method === 'POST') {
+      return ebayDisconnect(request, env)
+    }
     if (url.pathname === '/api/shipping/match' && request.method === 'POST') {
       return matchShippingProducts(request, env)
     }

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { ArrowUpRight, CheckCircle2, Clock3, ExternalLink, LoaderCircle, Package, RefreshCw, ShoppingBag, Store, Unplug } from 'lucide-react'
+import { ArrowUpRight, CheckCircle2, ChevronDown, Clock3, ExternalLink, LoaderCircle, Package, RefreshCw, ShoppingBag, Store, Unplug } from 'lucide-react'
 
 type EbayStatus = {
   connected: boolean
@@ -149,20 +149,21 @@ export default function EbayIntegrationPanel({ accessToken }: Props) {
   const endedCount = listings.filter(item => item.status === 'ENDED' || item.status === 'SOLD').length
 
   return (
-    <section className="ebay-integration-card" aria-label="eBay-Integration">
-      <div className="ebay-integration-header">
-        <div className="ebay-integration-title">
-          <span className="ebay-integration-icon"><Store size={17}/></span>
+    <details className="gmail-panel ebay-integration-card">
+      <summary className="gmail-panel-heading ebay-panel-heading">
+        <div>
+          <span className="gmail-panel-icon ebay-integration-icon"><Store size={17}/></span>
           <div>
             <strong>eBay</strong>
-            <span>Deine eBay-Angebote und Verkäufe automatisch übernehmen.</span>
+            <p>Deine eBay-Angebote und Verkäufe automatisch übernehmen.</p>
           </div>
         </div>
-        <span className={status?.connected ? 'ebay-connection-state is-connected' : 'ebay-connection-state'}>
+        <span className={status?.connected ? 'integration-status is-connected' : 'integration-status is-disconnected'}>
           <i/>{status?.connected ? 'Verbunden' : 'Nicht verbunden'}
         </span>
-      </div>
-
+        <ChevronDown size={16} className="gmail-chevron"/>
+      </summary>
+      <div className="gmail-panel-content ebay-panel-content">
       {!status?.connected ? (
         <div className="ebay-connect-content">
           <p>Verbinde dein eBay-Konto einmalig. Danach kann der Reselling Manager aktive Angebote, beendete Angebote und bezahlte Bestellungen auslesen. Dein eBay-Passwort wird nicht in der App gespeichert.</p>
@@ -230,6 +231,7 @@ export default function EbayIntegrationPanel({ accessToken }: Props) {
         <a href="https://developer.ebay.com/my/keys" target="_blank" rel="noreferrer">eBay Developer Keys <ExternalLink size={11}/></a>
         <a href="https://developer.ebay.com/develop/guides/sell/authorization" target="_blank" rel="noreferrer">OAuth-Einrichtung <ExternalLink size={11}/></a>
       </div>
-    </section>
+      </div>
+    </details>
   )
 }

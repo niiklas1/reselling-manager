@@ -8,6 +8,7 @@ import {
   isLikelyShippingEmail,
   isSafeTrackingUrl,
   mergeGmailLearningHint,
+  trackingCandidateDedupKey,
   scoreProductMatch,
   suggestProductMatch,
 } from '../src/lib/gmailShipping.ts'
@@ -183,4 +184,44 @@ test('uses the confirmed sender and subject pairing without guessing from sender
   const conflictingHint = { ...hint, productId: 'vinyl-duplicate' }
   const ambiguous = applyLearnedGmailMatch(candidate, products, [hint, conflictingHint])
   assert.equal(ambiguous.suggestedProductId, '')
+})
+
+test('keeps distinct number-only shipment emails while deduplicating the same parcel', () => {
+  assert.notEqual(
+    trackingCandidateDedupKey({ trackingNumber: '', trackingUrl: '', messageId: 'message-a' }),
+    trackingCandidateDedupKey({ trackingNumber: '', trackingUrl: '', messageId: 'message-b' })
+  )
+  assert.equal(
+    trackingCandidateDedupKey({ trackingNumber: 'AB 123456789', trackingUrl: '', messageId: 'message-a' }),
+    trackingCandidateDedupKey({ trackingNumber: 'AB123456789', trackingUrl: 'https://parcel.example/track/other', messageId: 'message-b' })
+  )
+  assert.equal(
+    trackingCandidateDedupKey({ trackingNumber: '', trackingUrl: 'https://parcel.example/track/123?utm_source=mail', messageId: 'message-a' }),
+    trackingCandidateDedupKey({ trackingNumber: '', trackingUrl: 'https://parcel.example/track/123', messageId: 'message-b' })
+  )
+})
+
+test('does not create local learning rules for duplicate units of the same product', () => {
+  const products = [
+    { id: 'unit-a', name: 'Taylor Swift The Life of a Showgirl Vinyl', category: 'Alternative', platform: 'Universal Music' },
+    { id: 'unit-b', name: 'Taylor Swift The Life of a Showgirl Vinyl', category: 'Alternative', platform: 'Universal Music' },
+  ]
+  const candidate = {
+    id: 'mail-5:0',
+    messageId: 'mail-5',
+    threadId: 'thread-5',
+    subject: 'Taylor Swift The Life of a Showgirl vinyl has shipped',
+    sender: 'Universal Store <shipping@universal-music.example>',
+    senderDomain: 'universal-music.example',
+    date: '2026-11-18T10:00:00.000Z',
+    direction: 'incoming',
+    carrier: 'Versanddienst',
+    trackingNumber: 'AB123456789',
+    trackingUrl: 'https://shop.example/track/AB123456789',
+    snippet: 'Your order has shipped',
+    matchText: 'Taylor Swift The Life of a Showgirl vinyl has shipped',
+    suggestedProductId: '',
+    matchConfidence: 0,
+  }
+  assert.equal(createGmailLearningHint(candidate, 'unit-a', products), null)
 })

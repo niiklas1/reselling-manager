@@ -284,8 +284,8 @@ async function matchShippingProducts(request: Request, env: Env): Promise<Respon
         ? cosineSimilarity(gemma[candidateIndex], gemma[emailTexts.length + productIndex])
         : 0
       const lexicalScore = lexicalSimilarity(candidate.text, product.name + ' ' + product.category)
-      const bgeNormalized = normalizedCosine(bgeSimilarity)
-      const gemmaNormalized = normalizedCosine(gemmaSimilarity)
+      const bgeNormalized = bge.length === total ? normalizedCosine(bgeSimilarity) : 0
+      const gemmaNormalized = gemma.length === total ? normalizedCosine(gemmaSimilarity) : 0
       const retrievalScore = bge.length === total && gemma.length === total
         ? bgeNormalized * 0.42 + gemmaNormalized * 0.42 + lexicalScore * 0.16
         : (bge.length === total ? bgeNormalized : gemmaNormalized) * 0.82 + lexicalScore * 0.18
@@ -329,12 +329,14 @@ async function matchShippingProducts(request: Request, env: Env): Promise<Respon
     const best = ranked[0]
     const second = ranked[1]
     const bgeRank = bge.length === total
-      ? initial.findIndex(item => item.productId === best?.productId)
+      ? [...initial].sort((left, right) => right.bgeNormalized - left.bgeNormalized).findIndex(item => item.productId === best?.productId)
       : 99
     const gemmaRank = gemma.length === total
       ? [...initial].sort((left, right) => right.gemmaNormalized - left.gemmaNormalized).findIndex(item => item.productId === best?.productId)
       : 99
-    const modelAgreement = bgeRank <= 2 && gemmaRank <= 2
+    const modelAgreement = bge.length === total && gemma.length === total
+      ? bgeRank <= 2 && gemmaRank <= 2
+      : bge.length === total ? bgeRank <= 1 : gemmaRank <= 1
     const enoughEvidence = hasReranker
       ? best.rerankerScore >= 0.22 && (best.lexicalScore >= 0.08 || modelAgreement || best.rerankerScore >= 0.62)
       : modelAgreement && (best.lexicalScore >= 0.18 || normalizedCosine(Math.max(best.bgeScore, best.gemmaScore)) >= 0.82)

@@ -716,10 +716,10 @@ function App() {
       // One-time, non-destructive migration of this browser's old local data.
       // LocalStorage and IndexedDB are never cleared; the cloud copy is verified
       // by reading it back before the app marks migration complete.
-      if (!settings.local_migration_completed && rows.length === 0) {
+      if (!settings.local_migration_completed) {
         const legacyProducts = readStoredProducts()
         let migrationPaths: string[] = []
-        if (legacyProducts.length > 0) {
+        if (rows.length === 0 && legacyProducts.length > 0) {
           const shouldMigrate = window.confirm(
             'Auf diesem Gerät wurden ' + legacyProducts.length + ' lokal gespeicherte Produkte gefunden. Möchtest du sie jetzt in dein persönliches Cloud-Konto übertragen? Die lokalen Originaldaten bleiben als zusätzliche Sicherung erhalten.'
           )
@@ -820,8 +820,6 @@ function App() {
     let active = true
     const refreshFromCloud = async () => {
       if (!navigator.onLine) return
-      setCloudSyncRetry(value => value + 1)
-
       const localProductsAreClean = JSON.stringify(currentProductsRef.current) === JSON.stringify(syncedProductsRef.current)
       if (localProductsAreClean) {
         const { data, error } = await supabase.from('products')

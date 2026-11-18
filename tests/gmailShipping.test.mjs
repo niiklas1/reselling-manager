@@ -11,6 +11,8 @@ test('recognizes common German and international carriers', () => {
   assert.equal(identifyCarrier('https://www.dhl.de/de/privatkunden/dhl-sendungsverfolgung.html'), 'DHL')
   assert.equal(identifyCarrier('https://www.ups.com/track'), 'UPS')
   assert.equal(identifyCarrier('https://www.myhermes.de/'), 'Hermes')
+  assert.equal(identifyCarrier('https://tracking.dhl.de/'), 'DHL')
+  assert.equal(identifyCarrier('https://dhl.attacker.example/'), '')
 })
 
 test('accepts HTTPS tracking links and rejects unsafe protocols or unrelated links', () => {
@@ -18,6 +20,7 @@ test('accepts HTTPS tracking links and rejects unsafe protocols or unrelated lin
   assert.equal(isSafeTrackingUrl('http://www.dhl.de/track'), false)
   assert.equal(isSafeTrackingUrl('javascript:alert(1)'), false)
   assert.equal(isSafeTrackingUrl('https://example.com/about-us'), false)
+  assert.equal(isSafeTrackingUrl('https://dhl.attacker.example/track'), true)
   assert.equal(isSafeTrackingUrl('https://example-shop.de/track-shipment/123'), true)
 })
 

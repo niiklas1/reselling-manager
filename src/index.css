@@ -512,3 +512,27 @@ body{background:#f1eff8}
   .auth-screen{padding:15px}
   .auth-card{padding:26px 21px;border-radius:17px}
 }
+
+
+/* Explicit, non-destructive import of the previous device-local inventory. */
+.local-migration-card{
+  display:flex;align-items:center;justify-content:space-between;gap:18px;
+  margin:0 0 16px;padding:15px 17px;border:1px solid #d8c9fa;border-radius:12px;
+  background:#f7f3ff;
+}
+.local-migration-card>div{min-width:0;display:grid;gap:5px}
+.local-migration-card strong{font-size:11px;color:#514176}
+.local-migration-card p{margin:0;color:#736b8b;font-size:9px;line-height:1.6}
+.local-migration-card button{flex-shrink:0}
+.app-alert.info,.app-alert.success{padding:10px 12px;margin:0 0 14px;border-radius:8px;font-size:10px;line-height:1.5}
+.app-alert.info{background:#f1edff;color:#6650aa;border:1px solid #e2d9ff}
+.app-alert.success{background:#eaf5ef;color:#39785a;border:1px solid #d2e8da}
+:root[data-theme="dark"] .local-migration-card{background:#211e39;border-color:#493e67}
+:root[data-theme="dark"] .local-migration-card strong{color:#e6dcff}
+:root[data-theme="dark"] .local-migration-card p{color:#b6afd0}
+:root[data-theme="dark"] .app-alert.info{background:#2b2448;border-color:#403661;color:#d2c3ff}
+:root[data-theme="dark"] .app-alert.success{background:#193a32;border-color:#2d5848;color:#9de3c1}
+@media(max-width:700px){
+  .local-migration-card{align-items:stretch;flex-direction:column}
+  .local-migration-card button{width:100%;justify-content:center}
+}

@@ -37,6 +37,7 @@ Füge unter Additional Redirect URLs hinzu:
 ## 4. Testablauf
 
 - Mit einem Google-Konto anmelden und prüfen, ob die App zurückkehrt.
+- Falls vorhanden, lokale Alt-Daten bewusst in das Konto importieren und die Produkt- sowie Beleganzahl kontrollieren.
 - Ein Produkt anlegen, auf einem zweiten Gerät mit demselben Konto anmelden und den Eintrag prüfen.
 - Mit einem zweiten Google-Konto anmelden und sicherstellen, dass es keine Produkte des ersten Kontos sieht.
 - Einen Beleg hochladen und auf dem zweiten Gerät öffnen.
@@ -48,4 +49,4 @@ Füge unter Additional Redirect URLs hinzu:
 - Eine Google-Anmeldung erstellt bei der ersten erfolgreichen Anmeldung automatisch ein Supabase-Benutzerkonto.
 - Pro Gerät wird eine eigene Supabase-Sitzung gespeichert. Die Anmeldung auf anderen Geräten erfolgt jeweils einmal separat mit demselben Google-Konto.
 - Gmail-Versandimport ist eine separate Google-Freigabe. Sein kurzlebiges Gmail-Zugriffstoken wird nicht in der Cloud gespeichert; Gmail Client-ID und bestätigte Lernregeln werden pro Reselling-Manager-Konto synchronisiert.
-- Die bisher lokal gespeicherten Produkte werden absichtlich nicht automatisch einem neu angemeldeten Konto zugeordnet. Sichere sie vorher über das vorhandene Backup und importiere es nach der Anmeldung.
+- Die bisher lokal gespeicherten Produkte werden nicht automatisch übertragen. Wenn die App nach der Anmeldung lokale Produkte auf diesem Gerät erkennt, erscheint ein Importhinweis. Importiere sie nur, wenn diese Daten wirklich dir gehören; die alten lokalen Daten bleiben als zusätzliche Sicherung auf dem Gerät erhalten. Alternativ kannst du weiterhin ein vorhandenes PDF-, ZIP- oder JSON-Backup importieren.

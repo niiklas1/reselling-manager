@@ -304,7 +304,7 @@ function trackingNumberFromUrl(rawUrl: string): string {
 }
 
 export function decodeMimeWords(value: string): string {
-  return value.replace(/=\\?([^?]+)\\?([bq])\\?([^?]*)\\?=/gi, (whole, charset: string, encoding: string, payload: string) => {
+  return value.replace(/=\?([^?]+)\?([bq])\?([^?]*)\?=/gi, (whole, charset: string, encoding: string, payload: string) => {
     try {
       if (encoding.toLowerCase() === 'b') {
         const binary = atob(payload)

@@ -45,7 +45,7 @@ type Product = {
   outgoingTrackingNumber?: string
   outgoingTrackingUrl?: string
 }
-type Section = 'Übersicht' | 'Produkte' | 'Verkäufe' | 'Auswertungen' | 'Einstellungen'
+type Section = 'Übersicht' | 'Produkte' | 'Verkäufe' | 'Auswertungen' | 'Integrationen' | 'Einstellungen'
 
 type InvoiceDraftLine = InvoiceLineItem & {
   selected: boolean
@@ -550,7 +550,7 @@ function dataUrlToBlob(dataUrl: string): Blob {
 function App() {
   const [section, setSection] = useState<Section>('Übersicht')
   useEffect(() => {
-    if (new URLSearchParams(window.location.search).has('ebay')) setSection('Einstellungen')
+    if (new URLSearchParams(window.location.search).has('ebay')) setSection('Integrationen')
   }, [])
   const [dataError, setDataError] = useState('')
   const [authSession, setAuthSession] = useState<Session | null>(null)
@@ -1331,6 +1331,7 @@ function App() {
     { label: 'Produkte', icon: Package },
     { label: 'Verkäufe', icon: ShoppingBag },
     { label: 'Auswertungen', icon: ChartNoAxesCombined },
+    { label: 'Integrationen', icon: Mail },
   ]
 
   if (authLoading) {
@@ -1419,20 +1420,26 @@ function App() {
           )}
 
           {section === 'Auswertungen' && <section className="panel coming-panel"><div className="coming-icon"><Sparkles size={23}/></div><h2>Auswertungen</h2><p>Hier bauen wir deine Monatsübersichten, Gewinnentwicklung und Plattformvergleiche auf.</p><span className="coming-tag">WIRD ALS NÄCHSTES ERWEITERT</span></section>}
-          {section === 'Einstellungen' && <section className="panel settings-panel">
-            <div className="settings-intro"><div><span className="overline">WORKSPACE & KONTO</span><h2>Einstellungen</h2><p>Verwalte Integrationen, Datensicherung und persönliche Anzeigeoptionen.</p></div><span className="settings-account-pill">Google-Konto</span></div>
-            <div className="setting-row settings-account-row"><div><strong>Angemeldet als</strong><span>{authSession?.user.email}</span></div><span className="setting-pill">Privater Workspace</span></div>
-            <section className="settings-group">
-              <div className="settings-group-heading"><span className="settings-group-icon"><Mail size={17}/></span><div><h3>Integrationen</h3><p>Optionale Verbindungen zu externen Diensten.</p></div></div>
+          {section === 'Integrationen' && <section className="panel settings-panel integrations-page">
+            <div className="settings-intro"><div><span className="overline">VERBUNDENE DIENSTE</span><h2>Integrationen</h2><p>Verbinde externe Plattformen und verwalte Synchronisierung und Datensicherung an einem Ort.</p></div><span className="settings-account-pill">Dein Workspace</span></div>
+            <section className="settings-group integration-list">
+              <div className="settings-group-heading"><span className="settings-group-icon"><Mail size={17}/></span><div><h3>Plattformen & Dienste</h3><p>Verbindungen für deinen Reselling-Alltag.</p></div></div>
               <EbayIntegrationPanel accessToken={authSession.access_token}/>
               <GmailShippingPanel key={userId || 'signed-out'} products={products} onApply={applyGmailTracking} initialClientId={gmailClientId} initialLearningHints={gmailLearningHints} onSettingsChange={({ clientId, learningHints }) => { setGmailClientId(current => current === clientId ? current : clientId); setGmailLearningHints(current => JSON.stringify(current) === JSON.stringify(learningHints) ? current : learningHints) }}/>
             </section>
-            <section className="settings-group">
-              <div className="settings-group-heading"><span className="settings-group-icon"><HardDrive size={17}/></span><div><h3>Daten & Sicherung</h3><p>Dein Bestand wird privat gespeichert und auf deinen Geräten abgeglichen.</p></div></div>
+            <section className="settings-group integration-list">
+              <div className="settings-group-heading"><span className="settings-group-icon"><HardDrive size={17}/></span><div><h3>Daten & Sicherung</h3><p>Cloud-Synchronisierung und vollständige Backups.</p></div></div>
               <div className="setting-row"><div><strong>Cloud-Synchronisierung</strong><span>{cloudSyncState === 'saving' ? 'Änderungen werden gerade sicher in deinem Konto gespeichert.' : cloudSyncState === 'error' ? 'Die letzte Synchronisierung ist fehlgeschlagen. Bitte prüfe die Verbindung.' : 'Produkte, Verkäufe und Einstellungen sind auf allen angemeldeten Geräten verfügbar.'}</span></div><span className={`setting-pill sync-pill sync-${cloudSyncState}`}>{cloudSyncState === 'saving' ? 'Speichert …' : cloudSyncState === 'error' ? 'Fehler' : cloudSyncState === 'idle' ? 'Verbunden' : 'Aktuell'}</span></div>
               <div className="setting-row"><div><strong>Originalbelege</strong><span>PDFs und Bilder liegen in deinem privaten Cloud-Speicher. Nur dein Konto kann darauf zugreifen.</span></div><span className="setting-pill">Privat</span></div>
-              <div className="backup-section"><div className="backup-heading"><div><strong>Vollständiges Backup</strong><span>Sichere Produkte, Einstellungen und Originalbelege in einer PDF-Datei. Die Wiederherstellungsdaten sind darin eingebettet.</span></div><HardDrive size={20}/></div><div className="backup-actions"><button className="button-primary" onClick={() => void createBackup()} disabled={backupBusy}><ArrowDownToLine size={15}/>{backupBusy ? 'PDF wird erstellt …' : 'PDF-Backup erstellen'}</button><button className="button-secondary" onClick={() => backupInput.current?.click()} disabled={backupBusy}><FileUp size={15}/> Backup importieren</button><input ref={backupInput} type="file" accept=".pdf,application/pdf,.zip,application/zip,.json,application/json,application/octet-stream" hidden onChange={e => void restoreBackup(e.target.files?.[0])}/></div>{pendingBackupFile && <div className="backup-actions"><button className="button-primary" onClick={() => void shareBackupFile()}><ArrowUpRight size={15}/> PDF in Dateien sichern / teilen</button><button className="button-secondary" onClick={downloadBackupFile}><ArrowDownToLine size={15}/> PDF herunterladen</button></div>}{backupMessage && <p className="backup-message" role="status">{backupMessage}</p>}<small>Beim Wiederherstellen werden Produkte und Belege in dein angemeldetes Konto importiert. Das PDF bleibt eine unabhängige Sicherung.</small></div>
+              <details className="backup-integration-panel">
+                <summary className="gmail-panel-heading"><div><span className="gmail-panel-icon backup-integration-icon"><HardDrive size={17}/></span><div><strong>Vollständiges Backup</strong><p>Produkte, Einstellungen und Originalbelege sichern oder wiederherstellen.</p></div></div><span className="gmail-readonly">PDF · ZIP · JSON</span><ChevronDown size={16} className="gmail-chevron"/></summary>
+                <div className="backup-section"><div className="backup-heading"><div><strong>Datensicherung</strong><span>Sichere Produkte, Einstellungen und Originalbelege in einer PDF-Datei. Die Wiederherstellungsdaten sind darin eingebettet.</span></div></div><div className="backup-actions"><button className="button-primary" onClick={() => void createBackup()} disabled={backupBusy}><ArrowDownToLine size={15}/>{backupBusy ? 'PDF wird erstellt …' : 'PDF-Backup erstellen'}</button><button className="button-secondary" onClick={() => backupInput.current?.click()} disabled={backupBusy}><FileUp size={15}/> Backup importieren</button><input ref={backupInput} type="file" accept=".pdf,application/pdf,.zip,application/zip,.json,application/json,application/octet-stream" hidden onChange={e => void restoreBackup(e.target.files?.[0])}/></div>{pendingBackupFile && <div className="backup-actions"><button className="button-primary" onClick={() => void shareBackupFile()}><ArrowUpRight size={15}/> PDF in Dateien sichern / teilen</button><button className="button-secondary" onClick={downloadBackupFile}><ArrowDownToLine size={15}/> PDF herunterladen</button></div>}{backupMessage && <p className="backup-message" role="status">{backupMessage}</p>}<small>Beim Wiederherstellen werden Produkte und Belege in dein angemeldetes Konto importiert. Das PDF bleibt eine unabhängige Sicherung.</small></div>
+              </details>
             </section>
+          </section>}
+          {section === 'Einstellungen' && <section className="panel settings-panel">
+            <div className="settings-intro"><div><span className="overline">WORKSPACE & KONTO</span><h2>Einstellungen</h2><p>Verwalte deine persönlichen Anzeigeoptionen und Kontoeinstellungen.</p></div><span className="settings-account-pill">Google-Konto</span></div>
+            <div className="setting-row settings-account-row"><div><strong>Angemeldet als</strong><span>{authSession?.user.email}</span></div><span className="setting-pill">Privater Workspace</span></div>
             <section className="settings-group">
               <div className="settings-group-heading"><span className="settings-group-icon"><SlidersHorizontal size={17}/></span><div><h3>Darstellung & Währung</h3><p>Deine Anzeigeoptionen werden mit deinem Konto synchronisiert.</p></div></div>
               <div className="setting-row"><div><strong>Anzeigewährung</strong><span>Deine Beträge werden intern in EUR gespeichert und für die Anzeige umgerechnet.</span></div><select className="currency-select" value={currency} onChange={e => setCurrency(e.target.value as CurrencyCode)} aria-label="Anzeigewährung">{CURRENCY_OPTIONS.map(option => <option key={option.code} value={option.code} disabled={option.code !== 'EUR' && !exchangeRates.rates[option.code]}>{option.label} ({option.code})</option>)}</select></div>

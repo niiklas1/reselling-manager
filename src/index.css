@@ -457,3 +457,58 @@ body{background:#f1eff8}
   .gmail-candidate-actions>.field:first-child{grid-column:auto}
   .gmail-panel-heading{flex-direction:column}
 }
+
+
+/* Account sign-in and secure cloud session */
+.auth-screen{
+  min-height:100vh;
+  min-height:100dvh;
+  display:grid;
+  place-items:center;
+  padding:24px;
+  background:
+    radial-gradient(circle at 14% 12%,rgba(126,88,225,.15),transparent 34%),
+    radial-gradient(circle at 88% 86%,rgba(66,125,205,.12),transparent 32%),
+    #101426;
+}
+.auth-card{
+  width:min(100%,440px);
+  display:grid;
+  gap:18px;
+  padding:clamp(25px,6vw,42px);
+  border:1px solid rgba(180,164,225,.2);
+  border-radius:22px;
+  background:rgba(24,29,51,.96);
+  box-shadow:0 24px 80px rgba(0,0,0,.28);
+  color:#f3f0ff;
+}
+.auth-brand{display:flex;align-items:center;gap:11px;font:800 17px Manrope,sans-serif;letter-spacing:-.6px}
+.auth-brand>span:last-child>span{color:#aaa4bf;font-weight:500}
+.auth-brand .brand-symbol{width:38px;height:38px;display:grid;place-items:center;border-radius:11px;background:linear-gradient(145deg,#9a7af4,#6647c7);color:#fff;font-size:21px}
+.auth-eyebrow{margin-top:12px;color:#ac91f5;font-size:9px;font-weight:800;letter-spacing:1.7px}
+.auth-card h1{margin:-9px 0 0;font:800 clamp(25px,5vw,32px) Manrope,sans-serif;letter-spacing:-1.1px}
+.auth-description{margin:-8px 0 3px;color:#a9aec3;font-size:12px;line-height:1.7}
+.auth-google-button{
+  width:100%;min-height:50px;display:flex;align-items:center;justify-content:center;gap:12px;
+  padding:0 17px;border:1px solid #e2e4eb;border-radius:10px;background:#fff;color:#303340;
+  font-size:12px;font-weight:800;cursor:pointer;transition:transform .15s,box-shadow .15s,background .15s;
+}
+.auth-google-button:hover:not(:disabled){transform:translateY(-1px);box-shadow:0 8px 22px rgba(0,0,0,.2);background:#fafbff}
+.auth-google-button:focus-visible,.auth-secondary-button:focus-visible{outline:3px solid #aa91f5;outline-offset:3px}
+.auth-google-button:disabled{opacity:.72;cursor:wait}
+.auth-security{display:flex;align-items:flex-start;gap:9px;padding:12px;border:1px solid rgba(136,121,188,.22);border-radius:9px;background:rgba(72,58,112,.16);color:#c1bad7;font-size:9px;line-height:1.6}
+.auth-security svg{flex-shrink:0;color:#a88df2}
+.auth-footer{margin:0;color:#777f9c;text-align:center;font-size:9px;line-height:1.55}
+.auth-error{margin:0;padding:11px 12px;border-radius:8px;background:#48232f;color:#ffc0c8;font-size:10px;line-height:1.5}
+.auth-loading-card{min-height:160px;align-content:center;justify-items:center;text-align:center}
+.auth-loading-card>svg{color:#b29af7}
+.auth-loading-card>p{margin:0;color:#b5bad0;font-size:11px;line-height:1.6}
+.auth-loading-card h1{margin:0;font-size:23px}
+.auth-secondary-button{justify-self:center;border:0;background:transparent;color:#c4b3f7;font-size:10px;font-weight:700;padding:9px 12px;cursor:pointer}
+.cloud-error-status{color:#e79b9f!important}
+.cloud-error-status i{background:#d66a70!important;box-shadow:0 0 0 3px rgba(214,106,112,.12)!important}
+.app-alert.error button{margin-left:7px;border:0;background:transparent;color:inherit;font-size:inherit;font-weight:800;text-decoration:underline;cursor:pointer}
+@media(max-width:560px){
+  .auth-screen{padding:15px}
+  .auth-card{padding:26px 21px;border-radius:17px}
+}

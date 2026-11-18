@@ -4,12 +4,13 @@ import {
   CircleHelp, LayoutDashboard, Menu, Package, Plus, Search, Settings,
   ShoppingBag, SlidersHorizontal, Sparkles, Wallet, X, Trash2, Pencil,
   CalendarDays, Tag, Truck, CheckCircle2, LoaderCircle, DollarSign,
-  Camera, FileText, FileUp, ImagePlus, Moon, Sun, ExternalLink, RefreshCw, HardDrive
+  Camera, FileText, FileUp, ImagePlus, Moon, Sun, ExternalLink, RefreshCw, HardDrive, Mail
 } from 'lucide-react'
 import { readInvoiceSource } from './lib/invoiceSource'
 import type { InvoiceLineItem } from './lib/invoiceScanner'
 import { enrichInvoiceProductNames } from './lib/productLookup'
 import { googleImagesUrl, searchProductImages, type ProductImageResult } from './lib/productImages'
+import { scanGmailForTracking, type GmailTrackingCandidate, type ShippingDirection } from './lib/gmailShipping'
 
 type Status = 'Auf Lager' | 'Verkauft'
 const PRODUCT_CATEGORIES = ['Elektronik', 'TCG', 'Alternative'] as const
@@ -32,6 +33,12 @@ type Product = {
   imageAttribution: string
   imageLicense: string
   receiptPath: string
+  incomingCarrier?: string
+  incomingTrackingNumber?: string
+  incomingTrackingUrl?: string
+  outgoingCarrier?: string
+  outgoingTrackingNumber?: string
+  outgoingTrackingUrl?: string
 }
 type Section = 'Übersicht' | 'Produkte' | 'Verkäufe' | 'Auswertungen' | 'Einstellungen'
 
@@ -92,6 +99,12 @@ function normalizeProductUnits(records: Array<Partial<Product>>): Product[] {
       imageAttribution: item.imageAttribution || '',
       imageLicense: item.imageLicense || '',
       receiptPath: typeof item.receiptPath === 'string' ? item.receiptPath : '',
+      incomingCarrier: typeof item.incomingCarrier === 'string' ? item.incomingCarrier : '',
+      incomingTrackingNumber: typeof item.incomingTrackingNumber === 'string' ? item.incomingTrackingNumber : '',
+      incomingTrackingUrl: typeof item.incomingTrackingUrl === 'string' ? item.incomingTrackingUrl : '',
+      outgoingCarrier: typeof item.outgoingCarrier === 'string' ? item.outgoingCarrier : '',
+      outgoingTrackingNumber: typeof item.outgoingTrackingNumber === 'string' ? item.outgoingTrackingNumber : '',
+      outgoingTrackingUrl: typeof item.outgoingTrackingUrl === 'string' ? item.outgoingTrackingUrl : '',
       quantity: 1,
     }
     if (count === 1) {
@@ -739,7 +752,7 @@ function App() {
   }
 
   function editProduct(product: Product) { setEditing(product); setShowForm(true) }
-  function saveSale(values: { salePrice: number; shipping: number; fees: number; saleDate: string }) {
+  function saveSale(values: { salePrice: number; shipping: number; fees: number; saleDate: string; outgoingCarrier: string; outgoingTrackingNumber: string; outgoingTrackingUrl: string }) {
     if (!selling) return
     setProducts(current => current.map(item => item.id === selling.id
       ? { ...item, ...values, status: 'Verkauft' as Status }
@@ -755,6 +768,23 @@ function App() {
     }
   }
   function openNew() { setEditing(null); setShowForm(true) }
+  function applyGmailTracking(payload: { productId: string; direction: ShippingDirection; carrier: string; trackingNumber: string; trackingUrl: string }): boolean {
+    const product = products.find(item => item.id === payload.productId)
+    if (!product) {
+      setDataError('Das ausgewählte Produkt ist nicht mehr vorhanden. Bitte lade die Gmail-Treffer erneut.')
+      return false
+    }
+    const existingUrl = payload.direction === 'incoming' ? product.incomingTrackingUrl : product.outgoingTrackingUrl
+    if (existingUrl && existingUrl !== payload.trackingUrl) {
+      const directionLabel = payload.direction === 'incoming' ? 'eingehenden' : 'ausgehenden'
+      if (!window.confirm('Für dieses Produkt ist bereits ein ' + directionLabel + ' Tracking-Link gespeichert. Soll dieser wirklich überschrieben werden?')) return false
+    }
+    setProducts(current => current.map(item => item.id !== payload.productId ? item : payload.direction === 'incoming'
+      ? { ...item, incomingCarrier: payload.carrier, incomingTrackingNumber: payload.trackingNumber, incomingTrackingUrl: payload.trackingUrl }
+      : { ...item, outgoingCarrier: payload.carrier, outgoingTrackingNumber: payload.trackingNumber, outgoingTrackingUrl: payload.trackingUrl }))
+    setDataError('')
+    return true
+  }
 
   const navItems: { label: Section; icon: typeof LayoutDashboard }[] = [
     { label: 'Übersicht', icon: LayoutDashboard },
@@ -833,7 +863,7 @@ function App() {
           )}
 
           {section === 'Auswertungen' && <section className="panel coming-panel"><div className="coming-icon"><Sparkles size={23}/></div><h2>Auswertungen</h2><p>Hier bauen wir deine Monatsübersichten, Gewinnentwicklung und Plattformvergleiche auf.</p><span className="coming-tag">WIRD ALS NÄCHSTES ERWEITERT</span></section>}
-          {section === 'Einstellungen' && <section className="panel settings-panel"><div className="panel-title-row"><div><h2>Lokaler Workspace</h2><p>Die App läuft ohne Konto, Anmeldung oder E-Mail-Versand.</p></div></div><div className="setting-row"><div><strong>Betriebsmodus</strong><span>Persönliche Nutzung auf diesem Gerät.</span></div><span className="setting-pill">Ohne Login</span></div><div className="setting-row"><div><strong>Erscheinungsbild</strong><span>Zwischen dem dunklen Neon-Look und dem hellen Design wechseln.</span></div><button className="setting-toggle" onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}>{theme === 'dark' ? <Sun size={15}/> : <Moon size={15}/>} {theme === 'dark' ? 'Helles Design' : 'Dark Mode'}</button></div><div className="setting-row"><div><strong>Datenspeicherung</strong><span>Produkte werden nur in diesem Browser gespeichert. Es gibt keine Cloud-Synchronisierung.</span></div><span className="setting-pill">Lokal</span></div><div className="setting-row"><div><strong>Belege</strong><span>PDFs und Bilder werden im lokalen Browserspeicher dieses Geräts abgelegt.</span></div><span className="setting-pill">Auf diesem Gerät</span></div><div className="backup-section"><div className="backup-heading"><div><strong>Vollständiges PDF-Backup</strong><span>Sichere Produkte, Website-Einstellungen und sämtliche gespeicherten Originalbelege in einer einzigen PDF-Datei. Die Wiederherstellungsdaten sind in der PDF eingebettet.</span></div><HardDrive size={20}/></div><div className="backup-actions"><button className="button-primary" onClick={() => void createBackup()} disabled={backupBusy}><ArrowDownToLine size={15}/>{backupBusy ? 'PDF wird erstellt …' : 'PDF-Backup erstellen'}</button><button className="button-secondary" onClick={() => backupInput.current?.click()} disabled={backupBusy}><FileUp size={15}/> PDF / Backup importieren</button><input ref={backupInput} type="file" accept=".pdf,application/pdf,.zip,application/zip,.json,application/json,application/octet-stream" hidden onChange={e => void restoreBackup(e.target.files?.[0])}/></div>{pendingBackupFile && <div className="backup-actions"><button className="button-primary" onClick={() => void shareBackupFile()}><ArrowUpRight size={15}/> PDF in Dateien sichern / teilen</button><button className="button-secondary" onClick={downloadBackupFile}><ArrowDownToLine size={15}/> PDF herunterladen</button></div>}{backupMessage && <p className="backup-message" role="status">{backupMessage}</p>}<small>Auf dem iPhone im Teilen-Menü „In Dateien sichern“ wählen. Beim Wiederherstellen die unveränderte PDF auswählen. Ältere ZIP- und JSON-Backups bleiben ebenfalls importierbar.</small></div><div className="setting-row"><div><strong>Währung</strong><span>Wähle die Währung, in der Beträge angezeigt werden. Zahlenwerte werden dabei nicht umgerechnet.</span></div><select className="currency-select" value={currency} onChange={e => setCurrency(e.target.value)} aria-label="Anzeigewährung"><option value="EUR">Euro (€)</option><option value="USD">US-Dollar ($)</option><option value="GBP">Britisches Pfund (£)</option><option value="CHF">Schweizer Franken (CHF)</option></select></div><div className="setting-row"><div><strong>App-Version</strong><span>Reselling Manager – Invoice Studio</span></div><span className="setting-pill">0.3.0 Local</span></div></section>}
+          {section === 'Einstellungen' && <section className="panel settings-panel"><div className="panel-title-row"><div><h2>Lokaler Workspace</h2><p>Die App läuft ohne Konto, Anmeldung oder E-Mail-Versand.</p></div></div><GmailShippingPanel products={products} onApply={applyGmailTracking}/><div className="setting-row"><div><strong>Betriebsmodus</strong><span>Persönliche Nutzung auf diesem Gerät.</span></div><span className="setting-pill">Ohne Login</span></div><div className="setting-row"><div><strong>Erscheinungsbild</strong><span>Zwischen dem dunklen Neon-Look und dem hellen Design wechseln.</span></div><button className="setting-toggle" onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}>{theme === 'dark' ? <Sun size={15}/> : <Moon size={15}/>} {theme === 'dark' ? 'Helles Design' : 'Dark Mode'}</button></div><div className="setting-row"><div><strong>Datenspeicherung</strong><span>Produkte werden nur in diesem Browser gespeichert. Es gibt keine Cloud-Synchronisierung.</span></div><span className="setting-pill">Lokal</span></div><div className="setting-row"><div><strong>Belege</strong><span>PDFs und Bilder werden im lokalen Browserspeicher dieses Geräts abgelegt.</span></div><span className="setting-pill">Auf diesem Gerät</span></div><div className="backup-section"><div className="backup-heading"><div><strong>Vollständiges PDF-Backup</strong><span>Sichere Produkte, Website-Einstellungen und sämtliche gespeicherten Originalbelege in einer einzigen PDF-Datei. Die Wiederherstellungsdaten sind in der PDF eingebettet.</span></div><HardDrive size={20}/></div><div className="backup-actions"><button className="button-primary" onClick={() => void createBackup()} disabled={backupBusy}><ArrowDownToLine size={15}/>{backupBusy ? 'PDF wird erstellt …' : 'PDF-Backup erstellen'}</button><button className="button-secondary" onClick={() => backupInput.current?.click()} disabled={backupBusy}><FileUp size={15}/> PDF / Backup importieren</button><input ref={backupInput} type="file" accept=".pdf,application/pdf,.zip,application/zip,.json,application/json,application/octet-stream" hidden onChange={e => void restoreBackup(e.target.files?.[0])}/></div>{pendingBackupFile && <div className="backup-actions"><button className="button-primary" onClick={() => void shareBackupFile()}><ArrowUpRight size={15}/> PDF in Dateien sichern / teilen</button><button className="button-secondary" onClick={downloadBackupFile}><ArrowDownToLine size={15}/> PDF herunterladen</button></div>}{backupMessage && <p className="backup-message" role="status">{backupMessage}</p>}<small>Auf dem iPhone im Teilen-Menü „In Dateien sichern“ wählen. Beim Wiederherstellen die unveränderte PDF auswählen. Ältere ZIP- und JSON-Backups bleiben ebenfalls importierbar.</small></div><div className="setting-row"><div><strong>Währung</strong><span>Wähle die Währung, in der Beträge angezeigt werden. Zahlenwerte werden dabei nicht umgerechnet.</span></div><select className="currency-select" value={currency} onChange={e => setCurrency(e.target.value)} aria-label="Anzeigewährung"><option value="EUR">Euro (€)</option><option value="USD">US-Dollar ($)</option><option value="GBP">Britisches Pfund (£)</option><option value="CHF">Schweizer Franken (CHF)</option></select></div><div className="setting-row"><div><strong>App-Version</strong><span>Reselling Manager – Invoice Studio</span></div><span className="setting-pill">0.3.0 Local</span></div></section>}
           <footer className="page-footer">Reselling Manager <span>·</span> Einfach den Überblick behalten.</footer>
         </div>
       </main>
@@ -878,6 +908,8 @@ function ProductTable({ products, onEdit, onDelete, onSell, onReceipt }: { produ
         <div className="product-thumb">{product.imageUrl ? <img src={product.imageUrl} alt={product.name}/> : <Tag size={16}/>}</div>
         <div><strong>{product.name}</strong><span>{label ? label + ' · ' + (product.category || 'Ohne Kategorie') : (product.category || 'Ohne Kategorie')}</span>
           {product.receiptPath && <button className="receipt-inline" onClick={() => onReceipt(product)} title="Originalbeleg öffnen"><FileText size={12}/> Beleg öffnen</button>}
+          {product.incomingTrackingUrl && <a className="tracking-inline incoming" href={product.incomingTrackingUrl} target="_blank" rel="noreferrer"><ArrowDownToLine size={11}/> Eingang · {product.incomingCarrier || 'Sendung'}{product.incomingTrackingNumber ? ' · ' + product.incomingTrackingNumber : ''} <ExternalLink size={10}/></a>}
+          {product.outgoingTrackingUrl && <a className="tracking-inline outgoing" href={product.outgoingTrackingUrl} target="_blank" rel="noreferrer"><ArrowUpRight size={11}/> Ausgang · {product.outgoingCarrier || 'Sendung'}{product.outgoingTrackingNumber ? ' · ' + product.outgoingTrackingNumber : ''} <ExternalLink size={10}/></a>}
         </div>
       </div></td>
       <td>1</td>
@@ -952,12 +984,15 @@ function ReceiptModal({ product, onClose }: { product: Product; onClose: () => v
 function SaleModal({ product, onClose, onSave }: {
   product: Product
   onClose: () => void
-  onSave: (values: { salePrice: number; shipping: number; fees: number; saleDate: string }) => void
+  onSave: (values: { salePrice: number; shipping: number; fees: number; saleDate: string; outgoingCarrier: string; outgoingTrackingNumber: string; outgoingTrackingUrl: string }) => void
 }) {
   const [salePrice, setSalePrice] = useState(product.salePrice > 0 ? String(product.salePrice) : '')
   const [shipping, setShipping] = useState(String(product.shipping || 0))
   const [fees, setFees] = useState(String(product.fees || 0))
   const [saleDate, setSaleDate] = useState(product.saleDate || new Date().toISOString().slice(0, 10))
+  const [outgoingCarrier, setOutgoingCarrier] = useState(product.outgoingCarrier || '')
+  const [outgoingTrackingNumber, setOutgoingTrackingNumber] = useState(product.outgoingTrackingNumber || '')
+  const [outgoingTrackingUrl, setOutgoingTrackingUrl] = useState(product.outgoingTrackingUrl || '')
   const [error, setError] = useState('')
   const estimated = Number(salePrice || 0) - product.purchasePrice - Number(shipping || 0) - Number(fees || 0)
 
@@ -967,7 +1002,7 @@ function SaleModal({ product, onClose, onSave }: {
       setError('Bitte gib einen gültigen Verkaufspreis ein.')
       return
     }
-    onSave({ salePrice: Number(salePrice), shipping: Number(shipping || 0), fees: Number(fees || 0), saleDate })
+    onSave({ salePrice: Number(salePrice), shipping: Number(shipping || 0), fees: Number(fees || 0), saleDate, outgoingCarrier: outgoingCarrier.trim(), outgoingTrackingNumber: outgoingTrackingNumber.trim(), outgoingTrackingUrl: outgoingTrackingUrl.trim() })
   }
 
   return <div className="modal-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) onClose() }}><form className="modal-card sale-modal" onSubmit={submit}>
@@ -978,6 +1013,10 @@ function SaleModal({ product, onClose, onSave }: {
       <label className="field"><span>Versandkosten (€)</span><input type="number" min="0" step="0.01" value={shipping} onChange={event => setShipping(event.target.value)}/></label>
       <label className="field"><span>Plattformgebühren (€)</span><input type="number" min="0" step="0.01" value={fees} onChange={event => setFees(event.target.value)}/></label>
       <label className="field full"><span>Verkaufsdatum</span><input type="date" value={saleDate} onChange={event => setSaleDate(event.target.value)}/></label>
+      <div className="form-section full"><span>VERSAND AN DEN KÄUFER</span></div>
+      <label className="field"><span>Versanddienst</span><input value={outgoingCarrier} onChange={event => setOutgoingCarrier(event.target.value)} placeholder="z. B. DHL"/></label>
+      <label className="field"><span>Sendungsnummer</span><input value={outgoingTrackingNumber} onChange={event => setOutgoingTrackingNumber(event.target.value)} placeholder="Sendungsnummer"/></label>
+      <label className="field full"><span>Tracking-Link</span><input type="url" pattern="https://.*" title="Bitte einen HTTPS-Link verwenden." value={outgoingTrackingUrl} onChange={event => setOutgoingTrackingUrl(event.target.value)} placeholder="https://…"/></label>
       <div className="profit-preview full"><div><span>Voraussichtlicher Gewinn</span><small>Verkaufspreis − Einkaufspreis − Versand − Gebühren</small></div><strong className={estimated >= 0 ? 'positive' : 'negative'}>{money(estimated)}</strong></div>
       {error && <p className="inline-error full">{error}</p>}
     </div>
@@ -1001,6 +1040,12 @@ function ProductModal({ product, onClose, onSave }: {
   const [imageLicense, setImageLicense] = useState(product?.imageLicense || '')
   const [receiptPath, setReceiptPath] = useState(product?.receiptPath || '')
   const [receiptUrl, setReceiptUrl] = useState('')
+  const [incomingCarrier, setIncomingCarrier] = useState(product?.incomingCarrier || '')
+  const [incomingTrackingNumber, setIncomingTrackingNumber] = useState(product?.incomingTrackingNumber || '')
+  const [incomingTrackingUrl, setIncomingTrackingUrl] = useState(product?.incomingTrackingUrl || '')
+  const [outgoingCarrier, setOutgoingCarrier] = useState(product?.outgoingCarrier || '')
+  const [outgoingTrackingNumber, setOutgoingTrackingNumber] = useState(product?.outgoingTrackingNumber || '')
+  const [outgoingTrackingUrl, setOutgoingTrackingUrl] = useState(product?.outgoingTrackingUrl || '')
   const [invoiceFile, setInvoiceFile] = useState<File | null>(null)
   const [invoiceLines, setInvoiceLines] = useState<InvoiceDraftLine[]>([])
   const [showForm, setShowForm] = useState(Boolean(product))
@@ -1177,6 +1222,12 @@ function ProductModal({ product, onClose, onSave }: {
       saleDate: product?.saleDate || '',
       status: product?.status || 'Auf Lager' as Status,
       receiptPath,
+      incomingCarrier: incomingCarrier.trim(),
+      incomingTrackingNumber: incomingTrackingNumber.trim(),
+      incomingTrackingUrl: incomingTrackingUrl.trim(),
+      outgoingCarrier: outgoingCarrier.trim(),
+      outgoingTrackingNumber: outgoingTrackingNumber.trim(),
+      outgoingTrackingUrl: outgoingTrackingUrl.trim(),
     }
 
     let products: Product[]
@@ -1291,6 +1342,8 @@ function ProductModal({ product, onClose, onSave }: {
       <label className="field"><span>Kategorie *</span><select required value={category} onChange={e => setCategory(e.target.value as ProductCategory | '')}><option value="">Kategorie auswählen</option>{PRODUCT_CATEGORIES.map(option => <option key={option} value={option}>{option}</option>)}</select></label>
       <label className="field"><span>Einkaufsdatum</span><input type="date" value={purchaseDate} onChange={e=>setPurchaseDate(e.target.value)}/></label>
       <label className="field"><span>Plattform</span><select value={platform} onChange={e=>setPlatform(e.target.value)}><option value="">Bitte wählen</option><option>eBay</option><option>Kleinanzeigen</option><option>Vinted</option><option>Cardmarket</option><option>Facebook Marketplace</option><option>Sonstige</option></select></label>
+      <div className="form-section full"><span>VERSAND & SENDUNGSVERFOLGUNG</span></div>
+      <div className="shipping-form-block full"><section><strong>Eingehender Versand · Einkauf</strong><label className="field"><span>Versanddienst</span><input value={incomingCarrier} onChange={e=>setIncomingCarrier(e.target.value)} placeholder="z. B. DHL"/></label><label className="field"><span>Sendungsnummer</span><input value={incomingTrackingNumber} onChange={e=>setIncomingTrackingNumber(e.target.value)} placeholder="Sendungsnummer"/></label><label className="field"><span>Tracking-Link</span><input type="url" pattern="https://.*" title="Bitte einen HTTPS-Link verwenden." value={incomingTrackingUrl} onChange={e=>setIncomingTrackingUrl(e.target.value)} placeholder="https://…"/></label></section><section><strong>Ausgehender Versand · Verkauf</strong><label className="field"><span>Versanddienst</span><input value={outgoingCarrier} onChange={e=>setOutgoingCarrier(e.target.value)} placeholder="z. B. DHL"/></label><label className="field"><span>Sendungsnummer</span><input value={outgoingTrackingNumber} onChange={e=>setOutgoingTrackingNumber(e.target.value)} placeholder="Sendungsnummer"/></label><label className="field"><span>Tracking-Link</span><input type="url" pattern="https://.*" title="Bitte einen HTTPS-Link verwenden." value={outgoingTrackingUrl} onChange={e=>setOutgoingTrackingUrl(e.target.value)} placeholder="https://…"/></label></section></div>
       <div className="form-note full"><Package size={15}/> Das Produkt wird zunächst als Bestand gespeichert. Den Verkauf kannst du später direkt im Inventar eintragen.</div>
       {ocrText && <details className="ocr-details full"><summary>Erkannten Rechnungstext anzeigen</summary><pre>{ocrText.slice(0, 8000)}</pre></details>}
     </div><div className="modal-actions"><button type="button" className="button-ghost" onClick={onClose} disabled={saving}>Abbrechen</button><button type="submit" className="button-primary" disabled={saving || scanBusy || (invoiceLines.length > 0 && selectedLines.length === 0)}>{saving ? <LoaderCircle size={15} className="spin"/> : null}{saving ? 'Speichert …' : product ? 'Änderungen speichern' : invoiceLines.length > 0 ? selectedLines.length + ' Positionen hinzufügen' : 'Produkt speichern'}</button></div></form>}
@@ -1298,6 +1351,155 @@ function ProductModal({ product, onClose, onSave }: {
 }
 
 
+
+type GoogleTokenResponse = { access_token?: string; error?: string; expires_in?: number }
+type GoogleTokenClient = { requestAccessToken: (options?: { prompt?: string }) => void }
+type GoogleIdentity = {
+  accounts: {
+    oauth2: {
+      revoke?: (token: string, callback: () => void) => void
+      initTokenClient: (options: {
+        client_id: string
+        scope: string
+        callback: (response: GoogleTokenResponse) => void
+        error_callback?: (error: { type?: string; message?: string }) => void
+      }) => GoogleTokenClient
+    }
+  }
+}
+
+function GmailShippingPanel({ products, onApply }: {
+  products: Product[]
+  onApply: (payload: { productId: string; direction: ShippingDirection; carrier: string; trackingNumber: string; trackingUrl: string }) => boolean
+}) {
+  const [clientId, setClientId] = useState(() => localStorage.getItem('reselling-gmail-client-id') || '')
+  const [accessToken, setAccessToken] = useState('')
+  const [candidates, setCandidates] = useState<GmailTrackingCandidate[]>([])
+  const [days, setDays] = useState('180')
+  const [ready, setReady] = useState(false)
+  const [scanning, setScanning] = useState(false)
+  const [message, setMessage] = useState('')
+  const [error, setError] = useState('')
+  const tokenClient = useRef<GoogleTokenClient | null>(null)
+
+  useEffect(() => {
+    localStorage.setItem('reselling-gmail-client-id', clientId.trim())
+  }, [clientId])
+
+  useEffect(() => {
+    const existing = document.querySelector<HTMLScriptElement>('script[data-google-identity]')
+    if ((window as Window & { google?: GoogleIdentity }).google?.accounts?.oauth2) {
+      setReady(true)
+      return
+    }
+    const script = existing || document.createElement('script')
+    script.src = 'https://accounts.google.com/gsi/client'
+    script.async = true
+    script.defer = true
+    script.dataset.googleIdentity = 'true'
+    const onLoad = () => setReady(true)
+    script.addEventListener('load', onLoad)
+    if (!existing) document.head.appendChild(script)
+    return () => script.removeEventListener('load', onLoad)
+  }, [])
+
+  async function syncWithToken(value: string) {
+    setScanning(true)
+    setError('')
+    setMessage('')
+    try {
+      const found = await scanGmailForTracking(value, products, Number(days), 100)
+      setCandidates(found)
+      setMessage(found.length
+        ? found.length + ' mögliche Versandlink(s) gefunden. Prüfe die Produktzuordnung, bevor du sie übernimmst.'
+        : 'Keine passenden Versandlinks im gewählten Zeitraum gefunden.')
+    } catch (scanError) {
+      const detail = scanError instanceof Error ? scanError.message : 'Gmail-Suche fehlgeschlagen.'
+      setError(detail)
+      if (detail.includes('abgelaufen')) setAccessToken('')
+    } finally {
+      setScanning(false)
+    }
+  }
+
+  useEffect(() => {
+    const google = (window as Window & { google?: GoogleIdentity }).google
+    if (!clientId.trim() || !google?.accounts?.oauth2) {
+      tokenClient.current = null
+      return
+    }
+    tokenClient.current = google.accounts.oauth2.initTokenClient({
+      client_id: clientId.trim(),
+      scope: 'https://www.googleapis.com/auth/gmail.readonly',
+      callback: response => {
+        if (response.error || !response.access_token) {
+          setError('Google-Anmeldung fehlgeschlagen: ' + (response.error || 'Kein Zugriffstoken erhalten.'))
+          return
+        }
+        // The short-lived OAuth access token stays in component memory only.
+        // It is deliberately never written to localStorage or sent to our Worker.
+        setAccessToken(response.access_token)
+        void syncWithToken(response.access_token)
+      },
+      error_callback: authError => setError(authError.message || 'Google-Anmeldung wurde abgebrochen.')
+    })
+  }, [clientId, ready, products, days])
+
+  function connectAndScan() {
+    setError('')
+    if (!clientId.trim() || !clientId.trim().endsWith('.apps.googleusercontent.com')) {
+      setError('Trage zuerst deine Google OAuth Client-ID ein.')
+      return
+    }
+    if (!ready || !tokenClient.current) {
+      setError('Google Identity Services werden noch geladen. Bitte versuche es gleich erneut.')
+      return
+    }
+    if (accessToken) void syncWithToken(accessToken)
+    else tokenClient.current.requestAccessToken({ prompt: '' })
+  }
+
+  function applyCandidate(candidate: GmailTrackingCandidate) {
+    if (!candidate.suggestedProductId) {
+      setError('Bitte wähle zuerst das passende Produkt aus.')
+      return
+    }
+    const applied = onApply({
+      productId: candidate.suggestedProductId,
+      direction: candidate.direction,
+      carrier: candidate.carrier,
+      trackingNumber: candidate.trackingNumber,
+      trackingUrl: candidate.trackingUrl,
+    })
+    if (!applied) return
+    setCandidates(current => current.filter(item => item.id !== candidate.id))
+    setMessage('Versanddaten wurden dem Produkt zugeordnet.')
+  }
+
+  return <section className="gmail-panel">
+    <div className="gmail-panel-heading"><div><span className="gmail-panel-icon"><Mail size={17}/></span><div><strong>Gmail-Versandimport</strong><p>Versandbestätigungen finden und eingehende oder ausgehende Trackingdaten einem Produkt zuordnen.</p></div></div><span className="gmail-readonly">Nur lesen</span></div>
+    <div className="gmail-setup">
+      <label className="field"><span>Google OAuth Client-ID</span><input value={clientId} onChange={event => setClientId(event.target.value)} placeholder="123456789-abc.apps.googleusercontent.com" autoComplete="off" spellCheck={false}/></label>
+      <small>Einmalig: Gmail API in Google Cloud aktivieren, OAuth-Einwilligungsbildschirm einrichten, OAuth-Client vom Typ „Webanwendung“ erstellen und diese oben angezeigte Website-Adresse als autorisierten JavaScript-Ursprung eintragen. Danach nur die Client-ID hier einfügen. Kein Client Secret nötig; Zugriff nur lesend.</small>
+      <div className="gmail-setup-links"><a href="https://console.cloud.google.com/apis/library/gmail.googleapis.com" target="_blank" rel="noreferrer">Gmail API aktivieren <ExternalLink size={11}/></a><a href="https://console.cloud.google.com/auth/clients" target="_blank" rel="noreferrer">OAuth Client-ID erstellen <ExternalLink size={11}/></a><a href="https://developers.google.com/identity/oauth2/web/guides/use-token-model" target="_blank" rel="noreferrer">Google-Anleitung <ExternalLink size={11}/></a></div>
+      <div className="gmail-origin"><span>Autorisierte JavaScript-Quelle:</span><code>{window.location.origin}</code><button type="button" onClick={() => void navigator.clipboard?.writeText(window.location.origin)}>Kopieren</button></div>
+    </div>
+    <div className="gmail-controls"><label className="field"><span>Zeitraum durchsuchen</span><select value={days} onChange={event => setDays(event.target.value)}><option value="30">Letzte 30 Tage</option><option value="90">Letzte 90 Tage</option><option value="180">Letzte 180 Tage</option><option value="365">Letztes Jahr</option></select></label><button type="button" className="button-primary" onClick={connectAndScan} disabled={scanning || !ready || !clientId.trim()}><Mail size={14}/>{scanning ? 'Gmail wird durchsucht …' : accessToken ? 'Erneut nach Versandmails suchen' : 'Gmail verbinden & suchen'}</button>{accessToken && <button type="button" className="button-ghost" onClick={() => { const google = (window as Window & { google?: GoogleIdentity }).google; if (accessToken) google?.accounts?.oauth2?.revoke?.(accessToken, () => undefined); setAccessToken(''); setCandidates([]); setMessage('Gmail-Zugriff wurde getrennt. Die Google-Freigabe wurde zum Widerruf angefordert.') }}>Trennen</button>}</div>
+    {message && <p className="gmail-message" role="status">{message}</p>}
+    {error && <p className="gmail-error" role="alert">{error}</p>}
+    {candidates.length > 0 && <div className="gmail-candidates"><div className="gmail-candidates-heading"><strong>Gefundene Versandlinks</strong><span>{candidates.length} zur Prüfung</span></div>
+      {candidates.map(candidate => <article className="gmail-candidate" key={candidate.id}>
+        <div className="gmail-candidate-top"><div><strong>{candidate.subject}</strong><small>{candidate.sender} · {candidate.date ? new Date(candidate.date).toLocaleDateString('de-DE') : 'Datum unbekannt'} · {candidate.carrier}</small></div><span className={candidate.direction === 'incoming' ? 'gmail-direction incoming' : 'gmail-direction outgoing'}>{candidate.direction === 'incoming' ? 'Eingang' : 'Ausgang'}</span></div>
+        {candidate.snippet && <p>{candidate.snippet}</p>}
+        <a className="gmail-track-link" href={candidate.trackingUrl} target="_blank" rel="noreferrer">{candidate.trackingUrl} <ExternalLink size={11}/></a>
+        {candidate.trackingNumber && <small>Sendungsnummer: {candidate.trackingNumber}</small>}
+        <small>{candidate.suggestedProductId ? 'Automatischer Produktvorschlag · ' + Math.round(candidate.matchConfidence * 100) + '% Übereinstimmung (bitte prüfen)' : 'Keine eindeutige Produktzuordnung – bitte manuell auswählen'}</small>
+        <div className="gmail-candidate-actions"><label className="field"><span>Produkt zuordnen</span><select value={candidate.suggestedProductId} onChange={event => setCandidates(current => current.map(item => item.id === candidate.id ? { ...item, suggestedProductId: event.target.value } : item))}><option value="">Produkt auswählen …</option>{products.map(product => <option key={product.id} value={product.id}>{product.name} · {product.status}</option>)}</select></label><label className="field"><span>Versandrichtung</span><select value={candidate.direction} onChange={event => setCandidates(current => current.map(item => item.id === candidate.id ? { ...item, direction: event.target.value as ShippingDirection } : item))}><option value="incoming">Eingehend · Einkauf</option><option value="outgoing">Ausgehend · Verkauf</option></select></label><button type="button" className="button-primary" onClick={() => applyCandidate(candidate)} disabled={!candidate.suggestedProductId}>Übernehmen</button><button type="button" className="button-ghost" onClick={() => setCandidates(current => current.filter(item => item.id !== candidate.id))}>Verwerfen</button></div>
+      </article>)}
+    </div>}
+    <small className="gmail-privacy">Die Suche läuft mit der Google-Berechtigung „gmail.readonly“. E-Mail-Inhalte werden nur im Browser ausgewertet. Treffer werden nie ohne deine Bestätigung einem Produkt zugeordnet.</small>
+  </section>
+}
 
 function HelpModal({ onClose }: { onClose: () => void }) {
   return <div className="modal-backdrop help-backdrop" onMouseDown={e => { if (e.target === e.currentTarget) onClose() }}><section className="modal-card help-card">

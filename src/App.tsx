@@ -2120,8 +2120,9 @@ function GmailShippingPanel({ products, onApply, initialClientId, initialLearnin
       setError('Google Identity Services werden noch geladen. Bitte versuche es gleich erneut.')
       return
     }
-    if (accessToken) void syncWithToken(accessToken)
-    else tokenClient.current.requestAccessToken({ prompt: '' })
+    // Google Identity Services access tokens are short-lived. Always request
+    // a fresh token from this explicit user action instead of reusing a stale one.
+    tokenClient.current.requestAccessToken({ prompt: '' })
   }
 
   function applyCandidate(candidate: GmailTrackingCandidate) {

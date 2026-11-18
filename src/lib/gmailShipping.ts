@@ -359,6 +359,12 @@ function canonicalTrackingUrl(rawUrl: string): string {
   }
 }
 
+export function trackingCandidateDedupKey(candidate: Pick<GmailTrackingCandidate, 'trackingNumber' | 'trackingUrl' | 'messageId'>): string {
+  if (candidate.trackingNumber) return 'number:' + candidate.trackingNumber.toUpperCase().replace(/[^A-Z0-9]/g, '')
+  if (candidate.trackingUrl) return 'url:' + canonicalTrackingUrl(candidate.trackingUrl)
+  return 'message:' + candidate.messageId
+}
+
 function minimizeForAi(value: string): string {
   return value
     .replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, '[E-Mail entfernt]')
@@ -588,11 +594,7 @@ export async function scanGmailForTracking(
   // provides only a number, use the message ID rather than an empty URL key.
   const deduplicated = new Map<string, GmailTrackingCandidate>()
   for (const candidate of newCandidates) {
-    const key = candidate.trackingNumber
-      ? 'number:' + candidate.trackingNumber.toUpperCase().replace(/[^A-Z0-9]/g, '')
-      : candidate.trackingUrl
-        ? 'url:' + canonicalTrackingUrl(candidate.trackingUrl)
-        : 'message:' + candidate.messageId
+    const key = trackingCandidateDedupKey(candidate)
     const previous = deduplicated.get(key)
     if (!previous || candidate.date > previous.date) deduplicated.set(key, candidate)
   }

@@ -1422,7 +1422,7 @@ function App() {
           )}
 
           {section === 'Auswertungen' && <section className="panel coming-panel"><div className="coming-icon"><Sparkles size={23}/></div><h2>Auswertungen</h2><p>Hier bauen wir deine Monatsübersichten, Gewinnentwicklung und Plattformvergleiche auf.</p><span className="coming-tag">WIRD ALS NÄCHSTES ERWEITERT</span></section>}
-          {section === 'Versand' && <ShippingCenter accessToken={authSession.access_token} products={products} userId={userId}/>}
+          {section === 'Versand' && <ShippingCenter accessToken={authSession.access_token} products={products} userId={authSession.user.id}/>}
           {section === 'Integrationen' && <section className="panel settings-panel integrations-page">
             <div className="settings-intro"><div><span className="overline">VERBUNDENE DIENSTE</span><h2>Integrationen</h2><p>Verbinde externe Plattformen und verwalte Synchronisierung und Datensicherung an einem Ort.</p></div><span className="settings-account-pill">Dein Workspace</span></div>
             <section className="settings-group integration-list">

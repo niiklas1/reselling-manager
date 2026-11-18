@@ -676,3 +676,70 @@ body{background:#f6f7f9}
 :root[data-theme="dark"] .page-footer .footer-separator{color:#69758b}
 :root[data-theme="dark"] .page-footer small{color:#8792a8}
 @media(max-width:720px){.topbar-right{gap:8px}}
+
+
+/* eBay account integration */
+.ebay-integration-card{margin-top:14px;padding:17px 18px;border:1px solid #e4e8ee;border-radius:12px;background:#fafbfd;color:#344155}
+.ebay-integration-header{display:flex;align-items:center;justify-content:space-between;gap:14px}
+.ebay-integration-title{display:flex;align-items:center;gap:11px;min-width:0}
+.ebay-integration-icon{display:grid;place-items:center;width:34px;height:34px;flex:0 0 34px;border-radius:10px;background:#edf1f6;color:#52647f}
+.ebay-integration-title strong,.ebay-integration-title span{display:block}
+.ebay-integration-title strong{font-size:13px;font-weight:700;color:#344155}
+.ebay-integration-title div>span{margin-top:3px;font-size:11px;color:#778397}
+.ebay-connection-state{display:inline-flex;align-items:center;gap:6px;white-space:nowrap;border:1px solid #e1e6ed;border-radius:999px;padding:5px 9px;color:#778397;font-size:10px;font-weight:600}
+.ebay-connection-state i{width:6px;height:6px;border-radius:50%;background:#aab3c0}
+.ebay-connection-state.is-connected{background:#edf6f0;border-color:#d8e9dd;color:#3e7355}
+.ebay-connection-state.is-connected i{background:#4e9a6a}
+.ebay-connect-content{padding-top:14px}
+.ebay-connect-content p{max-width:690px;margin:0 0 13px;color:#657286;font-size:12px;line-height:1.6}
+.ebay-connect-content>small{display:block;margin-top:9px;color:#8a95a4;font-size:10px}
+.ebay-metrics{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin:15px 0}
+.ebay-metrics>div{padding:11px 12px;background:#f1f4f8;border-radius:9px}
+.ebay-metrics span,.ebay-metrics strong{display:block}
+.ebay-metrics span{color:#788497;font-size:10px}
+.ebay-metrics strong{margin-top:4px;color:#344155;font-size:19px;font-weight:700;font-variant-numeric:tabular-nums}
+.ebay-sync-row{display:flex;align-items:center;justify-content:space-between;gap:12px;border-top:1px solid #e7ebf0;padding-top:13px}
+.ebay-sync-row>span,.ebay-sync-row>div{display:flex;align-items:center;gap:8px}
+.ebay-sync-row>span{color:#748094;font-size:10px}
+.ebay-sync-row>div{gap:7px}
+.ebay-automatic-note{display:flex;align-items:center;gap:7px;margin:11px 0 0;color:#63816d;font-size:10px}
+.ebay-import-list{margin-top:15px;border-top:1px solid #e7ebf0;padding-top:12px}
+.ebay-list-heading{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}
+.ebay-list-heading strong{font-size:11px;color:#44536a}
+.ebay-list-heading span{font-size:10px;color:#8994a3}
+.ebay-listing-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:9px 0;border-bottom:1px solid #edf0f4}
+.ebay-listing-info{display:flex;flex-direction:column;gap:4px;min-width:0}
+.ebay-listing-info a,.ebay-order-title{display:inline-flex;align-items:center;gap:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#43536b;text-decoration:none;font-size:11px;font-weight:600}
+.ebay-listing-info a:hover{color:#263e61;text-decoration:underline}
+.ebay-listing-info>span{color:#8993a1;font-size:9px}
+.ebay-listing-row>strong{flex:0 0 auto;color:#40516a;font-size:11px;font-weight:650;font-variant-numeric:tabular-nums}
+.ebay-more-note{display:block;margin-top:8px;color:#8792a2;font-size:10px}
+.ebay-empty{display:flex;align-items:center;gap:8px;margin-top:14px;padding:12px;border-radius:9px;background:#f1f4f8;color:#7b8798;font-size:11px}
+.ebay-error,.ebay-message{margin:12px 0 0;padding:9px 11px;border-radius:8px;font-size:11px;line-height:1.5}
+.ebay-error{background:#fff0f0;color:#9d4242}
+.ebay-message{background:#edf6f0;color:#477457}
+.ebay-setup-links{display:flex;flex-wrap:wrap;gap:14px;margin-top:14px}
+.ebay-setup-links a{display:inline-flex;align-items:center;gap:4px;color:#7c899b;text-decoration:none;font-size:10px}
+.ebay-setup-links a:hover{color:#435671;text-decoration:underline}
+:root[data-theme="dark"] .ebay-integration-card{background:#171e31;border-color:#303a50;color:#dce3ef}
+:root[data-theme="dark"] .ebay-integration-icon{background:#252f46;color:#bdcadf}
+:root[data-theme="dark"] .ebay-integration-title strong,:root[data-theme="dark"] .ebay-metrics strong,:root[data-theme="dark"] .ebay-list-heading strong,:root[data-theme="dark"] .ebay-listing-row>strong{color:#dbe2ee}
+:root[data-theme="dark"] .ebay-integration-title div>span,:root[data-theme="dark"] .ebay-connect-content p,:root[data-theme="dark"] .ebay-metrics span,:root[data-theme="dark"] .ebay-sync-row>span,:root[data-theme="dark"] .ebay-list-heading span,:root[data-theme="dark"] .ebay-listing-info>span,:root[data-theme="dark"] .ebay-more-note,:root[data-theme="dark"] .ebay-connect-content>small{color:#929fb5}
+:root[data-theme="dark"] .ebay-connection-state{background:#242c40;border-color:#3a465e;color:#aab5c8}
+:root[data-theme="dark"] .ebay-connection-state.is-connected{background:#1f342e;border-color:#335344;color:#9cc7aa}
+:root[data-theme="dark"] .ebay-metrics>div,:root[data-theme="dark"] .ebay-empty{background:#20283c}
+:root[data-theme="dark"] .ebay-sync-row,:root[data-theme="dark"] .ebay-import-list{border-color:#303a50}
+:root[data-theme="dark"] .ebay-listing-row{border-color:#2a3449}
+:root[data-theme="dark"] .ebay-listing-info a,:root[data-theme="dark"] .ebay-order-title{color:#c4d0e2}
+:root[data-theme="dark"] .ebay-automatic-note{color:#91b79d}
+:root[data-theme="dark"] .ebay-error{background:#3a252d;color:#e7a4aa}
+:root[data-theme="dark"] .ebay-message{background:#20362e;color:#a4cfb1}
+:root[data-theme="dark"] .ebay-setup-links a{color:#9ca9bd}
+@media(max-width:640px){
+  .ebay-integration-card{padding:14px}
+  .ebay-integration-header,.ebay-sync-row{align-items:flex-start;flex-direction:column}
+  .ebay-metrics{gap:6px}
+  .ebay-metrics>div{padding:9px}
+  .ebay-metrics strong{font-size:16px}
+  .ebay-listing-row{align-items:flex-start;flex-direction:column;gap:5px}
+}

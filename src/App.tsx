@@ -693,75 +693,12 @@ function App() {
       if (settingsResult.error) throw settingsResult.error
       if (!active) return
 
-      let rows = (productsResult.data || []) as CloudProductRow[]
-      let settings = settingsResult.data || {
+      const rows = (productsResult.data || []) as CloudProductRow[]
+      const settings = settingsResult.data || {
         currency: 'EUR',
         theme: 'dark',
         gmail_client_id: '',
         gmail_learning_hints: [],
-        local_migration_completed: false,
-      }
-
-      // One-time, non-destructive migration of this browser's old local data.
-      // LocalStorage and IndexedDB are never cleared; the cloud copy is verified
-      // by reading it back before the app marks migration complete.
-      if (!settings.local_migration_completed) {
-        const legacyProducts = readStoredProducts()
-        let migrationPaths: string[] = []
-        if (rows.length === 0 && legacyProducts.length > 0) {
-          const shouldMigrate = window.confirm(
-            'Auf diesem Gerät wurden ' + legacyProducts.length + ' lokal gespeicherte Produkte gefunden. Möchtest du sie jetzt in dein persönliches Cloud-Konto übertragen? Die lokalen Originaldaten bleiben als zusätzliche Sicherung erhalten.'
-          )
-          if (shouldMigrate) {
-            const pathMap = new Map<string, string>()
-            try {
-              for (const product of legacyProducts) {
-                const oldPath = product.receiptPath
-                if (!oldPath || !oldPath.startsWith('local:') || pathMap.has(oldPath)) continue
-                const blob = await readLocalReceipt(oldPath)
-                if (!blob) throw new Error('Ein lokal zugeordneter Originalbeleg fehlt. Die Übertragung wurde abgebrochen; lokale Daten wurden nicht gelöscht.')
-                const originalFile = blob instanceof File ? blob : new File([blob], 'beleg-' + oldPath.slice(6), { type: blob.type || 'application/octet-stream' })
-                const cloudPath = await uploadCloudReceipt(userId, originalFile)
-                migrationPaths.push(cloudPath)
-                pathMap.set(oldPath, cloudPath)
-              }
-              const migratedProducts = legacyProducts.map(product => ({
-                ...product,
-                receiptPath: product.receiptPath ? pathMap.get(product.receiptPath) || '' : '',
-              }))
-              for (let index = 0; index < migratedProducts.length; index += 100) {
-                const batch = migratedProducts.slice(index, index + 100).map(product => productToCloudRow(product, userId))
-                const { error } = await supabase.from('products').upsert(batch, { onConflict: 'id' })
-                if (error) throw error
-              }
-              const { data: verifiedRows, error: verifyError } = await supabase.from('products')
-                .select('*')
-                .eq('user_id', userId)
-                .is('deleted_at', null)
-                .order('created_at', { ascending: false })
-              if (verifyError) throw verifyError
-              if ((verifiedRows || []).length !== migratedProducts.length) {
-                throw new Error('Die Anzahl der übertragenen Produkte stimmt nicht mit den lokalen Daten überein. Die lokalen Originaldaten bleiben erhalten.')
-              }
-              rows = (verifiedRows || []) as CloudProductRow[]
-            } catch (migrationError) {
-              await Promise.all(migrationPaths.map(path => deleteCloudReceipt(path.slice(CLOUD_RECEIPT_PREFIX.length)).catch(() => undefined)))
-              throw migrationError
-            }
-          }
-        }
-
-        const { error: markMigrationError } = await supabase.from('user_settings').upsert({
-          user_id: userId,
-          currency: settings.currency || 'EUR',
-          theme: settings.theme === 'light' ? 'light' : 'dark',
-          gmail_client_id: settings.gmail_client_id || '',
-          gmail_learning_hints: settings.gmail_learning_hints || [],
-          local_migration_completed: true,
-          updated_at: new Date().toISOString(),
-        }, { onConflict: 'user_id' })
-        if (markMigrationError) throw markMigrationError
-        settings = { ...settings, local_migration_completed: true }
       }
 
       const loadedProducts = rows.map(cloudRowToProduct)

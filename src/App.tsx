@@ -831,7 +831,7 @@ function App() {
         const hints = Array.isArray(data.gmail_learning_hints) ? data.gmail_learning_hints as GmailLearningHint[] : []
         const nextSettings = {
           currency: ['EUR', 'USD', 'GBP', 'CHF'].includes(data.currency) ? data.currency : 'EUR',
-          theme: data.theme === 'light' ? 'light' : 'dark',
+          theme: (data.theme === 'light' ? 'light' : 'dark') as 'light' | 'dark',
           gmailClientId: data.gmail_client_id || '',
           gmailLearningHints: hints,
         }

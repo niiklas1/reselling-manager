@@ -743,3 +743,39 @@ body{background:#f6f7f9}
   .ebay-metrics strong{font-size:16px}
   .ebay-listing-row{align-items:flex-start;flex-direction:column;gap:5px}
 }
+
+
+/* Shared integration accordion and connection indicators */
+.gmail-panel-heading>div{align-items:center}
+.gmail-panel-icon,.ebay-integration-icon,.backup-integration-icon{display:grid;place-items:center;align-self:center;line-height:0}
+.gmail-panel-icon svg,.ebay-integration-icon svg,.backup-integration-icon svg{display:block;flex:none}
+.integration-status{display:inline-flex;align-items:center;gap:6px;flex:0 0 auto;padding:5px 9px;border:1px solid;border-radius:999px;font-size:9px;font-weight:700;white-space:nowrap}
+.integration-status i{width:6px;height:6px;display:block;border-radius:50%;background:currentColor}
+.integration-status.is-connected{background:#edf6f0;border-color:#d6e9dc;color:#32784f}
+.integration-status.is-disconnected{background:#fff0f0;border-color:#f0d7d7;color:#b84c4c}
+.ebay-integration-card{display:block;margin-top:13px;padding:0 16px;border:1px solid #e5e9ef;border-radius:11px;background:#fff;color:inherit}
+.ebay-panel-heading{min-height:64px;align-items:center;cursor:pointer;list-style:none}
+.ebay-panel-heading::-webkit-details-marker{display:none}
+.ebay-panel-heading>div{align-items:center}
+.ebay-panel-heading .gmail-panel-icon{background:#f0f3f8;color:#536681}
+.ebay-panel-content{padding:0 0 15px}
+.backup-integration-panel{display:block;margin-top:13px;padding:0 15px;border:1px solid #e5e9ef;border-radius:11px;background:#fff}
+.backup-integration-panel>.gmail-panel-heading{min-height:62px;align-items:center;cursor:pointer;list-style:none}
+.backup-integration-panel>.gmail-panel-heading::-webkit-details-marker{display:none}
+.backup-integration-panel .backup-integration-icon{background:#f0f3f8;color:#536681}
+.backup-integration-panel>.backup-section{padding:0 0 15px;border:0;margin:0}
+.backup-integration-panel .backup-heading{padding-top:3px}
+.backup-integration-panel .backup-heading>svg{display:none}
+.integration-list>.gmail-panel{margin-top:5px}
+.integration-list .gmail-panel:last-child{border-bottom:0}
+.integrations-page .settings-group{margin-top:22px}
+.integrations-page .settings-group-heading{margin-bottom:10px}
+:root[data-theme="dark"] .integration-status.is-connected{background:#1f342e;border-color:#335344;color:#9cc7aa}
+:root[data-theme="dark"] .integration-status.is-disconnected{background:#3a252d;border-color:#624047;color:#e7a4aa}
+:root[data-theme="dark"] .ebay-integration-card,:root[data-theme="dark"] .backup-integration-panel{background:#171e31;border-color:#303a50;color:#dce3ef}
+:root[data-theme="dark"] .ebay-panel-heading .gmail-panel-icon,:root[data-theme="dark"] .backup-integration-panel .backup-integration-icon{background:#252f46;color:#bdcadf}
+@media(max-width:640px){
+  .ebay-integration-card,.backup-integration-panel{padding-left:12px;padding-right:12px}
+  .ebay-panel-heading,.backup-integration-panel>.gmail-panel-heading{gap:8px}
+  .integration-status{padding:4px 7px;font-size:8px}
+}

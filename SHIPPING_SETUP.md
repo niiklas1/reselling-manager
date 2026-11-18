@@ -38,9 +38,10 @@ Die URL muss auf den Worker zeigen, der diese Version der App ausführt. Verwend
 ## 4. In der App
 
 1. Öffne **Versand**.
-2. Sendungsnummern, die in Produkten gespeichert sind, werden beim Öffnen der Versandzentrale für das Tracking registriert.
-3. 17TRACK sendet Statusänderungen anschließend über den Webhook. Der Browser erhält diese Änderungen über Supabase Realtime.
-4. Mit **Aktualisieren** kannst du auf Wunsch einen vollständigen manuellen Statusabgleich anstoßen.
+2. Die Versandzentrale zeigt zunächst deine bereits gespeicherten eingehenden und ausgehenden Sendungsnummern an, ohne sie beim Öffnen automatisch bei 17TRACK anzumelden.
+3. Prüfe dein verbleibendes 17TRACK-Kontingent und klicke dann bewusst auf **Aktualisieren**. Dadurch werden neue Sendungsnummern registriert und Statusdaten abgefragt. Jede neue Registrierung verbraucht Anbieter-Kontingent.
+4. 17TRACK sendet Statusänderungen anschließend über den Webhook. Der Browser erhält diese Änderungen über Supabase Realtime.
+5. Mit **Aktualisieren** kannst du später einen vollständigen manuellen Statusabgleich für noch nicht zugestellte Sendungen anstoßen.
 
 17TRACK dokumentiert automatische Folgeabfragen typischerweise alle 6–12 Stunden; bei zugestellten oder Ausnahme-Sendungen kann der Abstand 24 Stunden betragen. Webhook-Meldungen treffen bei neuen Tracking-Ergebnissen meist innerhalb von Sekunden ein, können laut Dokumentation aber auch länger als fünf Minuten brauchen.
 

@@ -134,17 +134,6 @@ function normalizeProductUnits(records: Array<Partial<Product>>): Product[] {
   return units
 }
 
-function readStoredProducts(): Product[] {
-  try {
-    const stored = JSON.parse(localStorage.getItem(PRODUCTS_STORAGE_KEY) || '[]')
-    if (!Array.isArray(stored)) return []
-    return normalizeProductUnits(stored as Array<Partial<Product>>)
-  } catch {
-    return []
-  }
-}
-
-
 type CloudProductRow = {
   id: string
   user_id: string

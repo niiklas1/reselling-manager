@@ -950,6 +950,9 @@ function App() {
     setBackupBusy(true)
     setBackupMessage('')
     const createdPaths: string[] = []
+    const previousProducts = syncedProductsRef.current
+    const previousSettings = { currency, theme, gmailClientId: gmailClientId.trim(), gmailLearningHints }
+    let restoreDatabaseStarted = false
     let restoreCommitted = false
     try {
       let restoredProducts: Product[]
@@ -1037,22 +1040,35 @@ function App() {
         return { ...product, receiptPath: newPaths[key] || '' }
       }))
 
-      // Restore only the app's own preferences. Never clear localStorage here:
-      // Supabase's PKCE session must survive a successful restore.
+      // Restore only app preferences. Never clear localStorage: the PKCE session
+      // must survive. Compute imported values before writing because React state
+      // updates do not take effect synchronously.
+      const restoredSettings = { ...previousSettings }
       if (storageSnapshot) {
         const restoredCurrency = storageSnapshot['reselling-currency']
         const restoredTheme = storageSnapshot['reselling-theme']
-        if (restoredCurrency && ['EUR', 'USD', 'GBP', 'CHF'].includes(restoredCurrency)) setCurrency(restoredCurrency)
-        if (restoredTheme === 'light' || restoredTheme === 'dark') setTheme(restoredTheme)
-        setGmailClientId(storageSnapshot['reselling-gmail-client-id'] || '')
+        if (restoredCurrency && ['EUR', 'USD', 'GBP', 'CHF'].includes(restoredCurrency)) restoredSettings.currency = restoredCurrency
+        if (restoredTheme === 'light' || restoredTheme === 'dark') restoredSettings.theme = restoredTheme
+        restoredSettings.gmailClientId = storageSnapshot['reselling-gmail-client-id'] || ''
         try {
           const restoredHints = JSON.parse(storageSnapshot['reselling-gmail-learning-v1'] || '[]')
-          setGmailLearningHints(Array.isArray(restoredHints) ? restoredHints : [])
+          restoredSettings.gmailLearningHints = Array.isArray(restoredHints) ? restoredHints : []
         } catch {
-          setGmailLearningHints([])
+          restoredSettings.gmailLearningHints = []
         }
       }
-      const previousProducts = syncedProductsRef.current
+
+      restoreDatabaseStarted = true
+      const { error: settingsWriteError } = await supabase.from('user_settings').upsert({
+        user_id: userId,
+        currency: restoredSettings.currency,
+        theme: restoredSettings.theme,
+        gmail_client_id: restoredSettings.gmailClientId,
+        gmail_learning_hints: restoredSettings.gmailLearningHints,
+        updated_at: new Date().toISOString(),
+      }, { onConflict: 'user_id' })
+      if (settingsWriteError) throw settingsWriteError
+
       const productRows = finalProducts.map(product => productToCloudRow(product, userId))
       if (productRows.length) {
         const { error } = await supabase.from('products').upsert(productRows, { onConflict: 'id' })
@@ -1067,22 +1083,10 @@ function App() {
         if (error) throw error
       }
 
-      const restoredSettings = {
-        currency,
-        theme,
-        gmailClientId: gmailClientId.trim(),
-        gmailLearningHints,
-      }
-      const { error: settingsWriteError } = await supabase.from('user_settings').upsert({
-        user_id: userId,
-        currency: restoredSettings.currency,
-        theme: restoredSettings.theme,
-        gmail_client_id: restoredSettings.gmailClientId,
-        gmail_learning_hints: restoredSettings.gmailLearningHints,
-        updated_at: new Date().toISOString(),
-      }, { onConflict: 'user_id' })
-      if (settingsWriteError) throw settingsWriteError
-
+      setCurrency(restoredSettings.currency)
+      setTheme(restoredSettings.theme)
+      setGmailClientId(restoredSettings.gmailClientId)
+      setGmailLearningHints(restoredSettings.gmailLearningHints)
       syncedProductsRef.current = finalProducts
       settingsSnapshotRef.current = JSON.stringify(restoredSettings)
       setProducts(finalProducts)
@@ -1094,8 +1098,40 @@ function App() {
       setCloudSyncState('synced')
       setBackupMessage('Wiederherstellung erfolgreich: ' + finalProducts.length + ' Produkte und ' + Object.keys(newPaths).length + ' Originalbelege in dein Cloud-Konto importiert.')
     } catch (error) {
+      let rollbackFailed = false
+      if (!restoreCommitted && restoreDatabaseStarted && userId) {
+        try {
+          if (previousProducts.length) {
+            const { error: rollbackWriteError } = await supabase.from('products').upsert(
+              previousProducts.map(product => productToCloudRow(product, userId)),
+              { onConflict: 'id' },
+            )
+            if (rollbackWriteError) throw rollbackWriteError
+          }
+          const { data: rowsAfterRollback, error: rollbackReadError } = await supabase.from('products').select('id').eq('user_id', userId)
+          if (rollbackReadError) throw rollbackReadError
+          const previousIds = new Set(previousProducts.map(product => product.id))
+          const insertedIds = (rowsAfterRollback || []).map((row: { id: string }) => row.id).filter((id: string) => !previousIds.has(id))
+          if (insertedIds.length) {
+            const { error: rollbackDeleteError } = await supabase.from('products').delete().eq('user_id', userId).in('id', insertedIds)
+            if (rollbackDeleteError) throw rollbackDeleteError
+          }
+          const { error: settingsRollbackError } = await supabase.from('user_settings').upsert({
+            user_id: userId,
+            currency: previousSettings.currency,
+            theme: previousSettings.theme,
+            gmail_client_id: previousSettings.gmailClientId,
+            gmail_learning_hints: previousSettings.gmailLearningHints,
+            updated_at: new Date().toISOString(),
+          }, { onConflict: 'user_id' })
+          if (settingsRollbackError) throw settingsRollbackError
+        } catch {
+          rollbackFailed = true
+        }
+      }
       if (!restoreCommitted) await Promise.all(createdPaths.map(path => deleteProductReceipt(path).catch(() => undefined)))
-      setBackupMessage(error instanceof Error ? error.message : 'Backup konnte nicht wiederhergestellt werden.')
+      const detail = error instanceof Error ? error.message : 'Backup konnte nicht wiederhergestellt werden.'
+      setBackupMessage(rollbackFailed ? detail + ' Zusätzlich konnte die vorherige Cloud-Version nicht vollständig automatisch wiederhergestellt werden. Bitte prüfe deine Daten, bevor du erneut importierst.' : detail)
     } finally {
       setBackupBusy(false)
       if (backupInput.current) backupInput.current.value = ''

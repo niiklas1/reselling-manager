@@ -778,6 +778,8 @@ function App() {
     if (existingUrl && payload.trackingUrl && existingUrl !== payload.trackingUrl) {
       const directionLabel = payload.direction === 'incoming' ? 'eingehenden' : 'ausgehenden'
       if (!window.confirm('Für dieses Produkt ist bereits ein ' + directionLabel + ' Tracking-Link gespeichert. Soll dieser wirklich überschrieben werden?')) return false
+    } else if (existingUrl && !payload.trackingUrl && payload.trackingNumber) {
+      if (!window.confirm('Diese E-Mail enthält nur eine Sendungsnummer, aber keinen Tracking-Link. Der bereits gespeicherte Link bleibt erhalten; die Sendungsnummer wird aktualisiert. Fortfahren?')) return false
     }
     setProducts(current => current.map(item => item.id !== payload.productId ? item : payload.direction === 'incoming'
       ? { ...item, incomingCarrier: payload.carrier, incomingTrackingNumber: payload.trackingNumber, incomingTrackingUrl: payload.trackingUrl || item.incomingTrackingUrl || '' }
@@ -908,8 +910,12 @@ function ProductTable({ products, onEdit, onDelete, onSell, onReceipt }: { produ
         <div className="product-thumb">{product.imageUrl ? <img src={product.imageUrl} alt={product.name}/> : <Tag size={16}/>}</div>
         <div><strong>{product.name}</strong><span>{label ? label + ' · ' + (product.category || 'Ohne Kategorie') : (product.category || 'Ohne Kategorie')}</span>
           {product.receiptPath && <button className="receipt-inline" onClick={() => onReceipt(product)} title="Originalbeleg öffnen"><FileText size={12}/> Beleg öffnen</button>}
-          {product.incomingTrackingUrl && <a className="tracking-inline incoming" href={product.incomingTrackingUrl} target="_blank" rel="noreferrer"><ArrowDownToLine size={11}/> Eingang · {product.incomingCarrier || 'Sendung'}{product.incomingTrackingNumber ? ' · ' + product.incomingTrackingNumber : ''} <ExternalLink size={10}/></a>}
-          {product.outgoingTrackingUrl && <a className="tracking-inline outgoing" href={product.outgoingTrackingUrl} target="_blank" rel="noreferrer"><ArrowUpRight size={11}/> Ausgang · {product.outgoingCarrier || 'Sendung'}{product.outgoingTrackingNumber ? ' · ' + product.outgoingTrackingNumber : ''} <ExternalLink size={10}/></a>}
+          {product.incomingTrackingUrl
+            ? <a className="tracking-inline incoming" href={product.incomingTrackingUrl} target="_blank" rel="noreferrer"><ArrowDownToLine size={11}/> Eingang · {product.incomingCarrier || 'Sendung'}{product.incomingTrackingNumber ? ' · ' + product.incomingTrackingNumber : ''} <ExternalLink size={10}/></a>
+            : product.incomingTrackingNumber && <span className="tracking-inline incoming"><ArrowDownToLine size={11}/> Eingang · {product.incomingCarrier || 'Sendung'} · {product.incomingTrackingNumber} (ohne Link)</span>}
+          {product.outgoingTrackingUrl
+            ? <a className="tracking-inline outgoing" href={product.outgoingTrackingUrl} target="_blank" rel="noreferrer"><ArrowUpRight size={11}/> Ausgang · {product.outgoingCarrier || 'Sendung'}{product.outgoingTrackingNumber ? ' · ' + product.outgoingTrackingNumber : ''} <ExternalLink size={10}/></a>
+            : product.outgoingTrackingNumber && <span className="tracking-inline outgoing"><ArrowUpRight size={11}/> Ausgang · {product.outgoingCarrier || 'Sendung'} · {product.outgoingTrackingNumber} (ohne Link)</span>}
         </div>
       </div></td>
       <td>1</td>

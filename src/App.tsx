@@ -633,35 +633,39 @@ function App() {
   async function signInWithGoogle() {
     setAuthBusy(true)
     setAuthError('')
-    const { error } = await supabase.auth.signInWithOAuth({
-      provider: 'google',
-      options: {
-        redirectTo: window.location.origin,
-        queryParams: { prompt: 'select_account' },
-      },
-    })
-    if (error) {
-      setAuthError('Die Google-Anmeldung konnte nicht gestartet werden: ' + error.message)
+    try {
+      const { error } = await supabase.auth.signInWithOAuth({
+        provider: 'google',
+        options: {
+          redirectTo: window.location.origin,
+          queryParams: { prompt: 'select_account' },
+        },
+      })
+      if (error) throw error
+    } catch (error) {
+      setAuthError('Die Google-Anmeldung konnte nicht gestartet werden: ' + (error instanceof Error ? error.message : 'Unbekannter Fehler'))
       setAuthBusy(false)
     }
   }
 
   async function signOut() {
     setAuthError('')
-    const { error } = await supabase.auth.signOut()
-    if (error) {
-      setDataError('Abmeldung fehlgeschlagen: ' + error.message)
-      return
+    setDataError('')
+    try {
+      const { error } = await supabase.auth.signOut()
+      if (error) throw error
+      loadedUserIdRef.current = null
+      syncedProductsRef.current = []
+      setProducts([])
+      setCloudReady(false)
+      setGmailClientId('')
+      setGmailLearningHints([])
+      setCurrency('EUR')
+      setTheme('dark')
+      setSection('Übersicht')
+    } catch (error) {
+      setDataError('Abmeldung fehlgeschlagen: ' + (error instanceof Error ? error.message : 'Unbekannter Fehler'))
     }
-    loadedUserIdRef.current = null
-    syncedProductsRef.current = []
-    setProducts([])
-    setCloudReady(false)
-    setGmailClientId('')
-    setGmailLearningHints([])
-    setCurrency('EUR')
-    setTheme('dark')
-    setSection('Übersicht')
   }
 
   useEffect(() => {
@@ -790,22 +794,23 @@ function App() {
     const timer = window.setTimeout(() => {
       syncQueueRef.current = syncQueueRef.current.catch(() => undefined).then(async () => {
         if (loadedUserIdRef.current !== userId) return
-        const { error } = await supabase.from('user_settings').upsert({
-          user_id: userId,
-          currency,
-          theme,
-          gmail_client_id: gmailClientId.trim(),
-          gmail_learning_hints: gmailLearningHints,
-          updated_at: new Date().toISOString(),
-        }, { onConflict: 'user_id' })
-        if (error) {
+        try {
+          const { error } = await supabase.from('user_settings').upsert({
+            user_id: userId,
+            currency,
+            theme,
+            gmail_client_id: gmailClientId.trim(),
+            gmail_learning_hints: gmailLearningHints,
+            updated_at: new Date().toISOString(),
+          }, { onConflict: 'user_id' })
+          if (error) throw error
+          settingsSnapshotRef.current = serialized
+          setCloudSyncState('synced')
+          setCloudSyncError('')
+        } catch (error) {
           setCloudSyncState('error')
-          setCloudSyncError('Einstellungen konnten nicht synchronisiert werden: ' + error.message)
-          return
+          setCloudSyncError('Einstellungen konnten nicht synchronisiert werden: ' + (error instanceof Error ? error.message : 'Unbekannter Fehler'))
         }
-        settingsSnapshotRef.current = serialized
-        setCloudSyncState('synced')
-        setCloudSyncError('')
       })
     }, 350)
     return () => window.clearTimeout(timer)

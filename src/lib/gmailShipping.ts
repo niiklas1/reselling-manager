@@ -440,6 +440,11 @@ function parseMessage(message: GmailMessage, products: MatchableProduct[]): Gmai
   const uniqueLinks = [...new Map(validLinks
     .sort((a, b) => b.score - a.score)
     .map(link => [canonicalTrackingUrl(link.url), link])).values()].slice(0, 3)
+  // A single shipment email can contain several order/account buttons. Keep
+  // one best tracking destination unless multiple links each carry their own
+  // distinct tracking number (multi-parcel order).
+  const separatelyNumberedLinks = uniqueLinks.filter(link => link.trackingNumber)
+  const linksToUse = separatelyNumberedLinks.length > 1 ? separatelyNumberedLinks : uniqueLinks.slice(0, 1)
   const date = dateFromMessage(message)
   const direction: ShippingDirection = labels.includes('SENT') ? 'outgoing' : 'incoming'
   const matchText = [subject, searchableText, domain].join('\n').slice(0, 5000)
@@ -471,7 +476,7 @@ function parseMessage(message: GmailMessage, products: MatchableProduct[]): Gmai
     }]
   }
 
-  return uniqueLinks.map((link, index) => ({
+  return linksToUse.map((link, index) => ({
     id: (message.id || 'mail') + ':' + index,
     messageId: message.id || '',
     threadId: message.threadId || '',

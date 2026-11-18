@@ -620,3 +620,59 @@ body{background:#f1eff8}
 /* Touch controls: keep common actions comfortably tappable on phones and tablets. */
 .button-primary,.button-secondary,.button-ghost,.setting-toggle,.top-icon,.theme-toggle,.top-avatar-button,.filter-control select,.currency-select,.nav-link{min-height:44px}
 .field input,.field select{min-height:44px}
+
+
+/* Visual refinement: a quieter, more cohesive interface. */
+body{background:#f6f7f9}
+.brand-symbol{background:#2f4058;color:#fff;box-shadow:none}
+.brand{color:#263448}
+.brand-muted{color:#8791a0}
+.nav-link.selected{background:#eef1f5;color:#34465f}
+.nav-link.selected svg{color:#526987}
+.nav-link:hover{background:#f5f6f8;color:#34465f}
+.button-primary{background:#2f4058;box-shadow:none;transform:none}
+.button-primary:hover{background:#3c506b;transform:none;box-shadow:0 2px 8px rgba(34,49,70,.12)}
+.button-secondary{background:#eef1f5;color:#3e5068}
+.button-secondary:hover{background:#e5e9ef}
+.page-header h1{background:none;background-clip:border-box;-webkit-background-clip:border-box;color:#283344;-webkit-text-fill-color:#283344}
+.metric-card,.panel{border-color:#e7eaf0;box-shadow:0 5px 18px rgba(31,42,58,.025)}
+.theme-toggle{background:#f0f2f5;color:#59677a}
+.theme-toggle:hover,.top-icon:hover{background:#e9edf2;color:#35465f}
+.topbar-right{gap:11px}
+.top-icon,.theme-toggle{width:36px;height:36px;min-width:36px;min-height:36px;flex:0 0 36px;border-radius:10px}
+.top-icon{background:transparent;color:#778394}
+.top-avatar-button,.topbar-right .top-avatar-button{width:36px;height:36px;min-width:36px;min-height:36px;flex:0 0 36px;aspect-ratio:1;border-radius:50%;padding:0;line-height:1;background:#edf0f4;border:1px solid #dfe4eb;color:#34465f;box-shadow:none}
+.topbar-right .top-avatar-button:hover{background:#e4e9ef;border-color:#d2dbe6}
+.profile-card{margin-top:13px;padding:13px 8px 10px;border-top:1px solid #eceff3;border-radius:10px}
+.profile-card:hover{background:#f5f6f8}
+.profile-copy{min-width:0;flex:1}
+.profile-copy strong,.profile-copy span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sidebar-foot{display:none}
+.page-footer{gap:8px;padding:27px 0 10px;color:#8791a0;font-size:10px;letter-spacing:.01em}
+.page-footer .footer-brand{color:#536176;font-weight:700}
+.page-footer .footer-separator{color:#b4bbc5;font-size:12px;line-height:1}
+.page-footer small{margin:0;padding:0;border:0;color:#9aa3af;font-size:9px;font-weight:500}
+:root[data-theme="dark"] body{background:#111528}
+:root[data-theme="dark"] .brand-symbol{background:#394761;box-shadow:none}
+:root[data-theme="dark"] .brand{color:#eef0f7}
+:root[data-theme="dark"] .brand-muted{color:#9aa4b8}
+:root[data-theme="dark"] .nav-link.selected{background:#252d43;color:#e7ebf4}
+:root[data-theme="dark"] .nav-link.selected svg{color:#b9c7dc}
+:root[data-theme="dark"] .nav-link:hover{background:#1b2235;color:#e7ebf4}
+:root[data-theme="dark"] .button-primary{background:#536783;box-shadow:none}
+:root[data-theme="dark"] .button-primary:hover{background:#627995}
+:root[data-theme="dark"] .button-secondary{background:#242c40;color:#d5dbea}
+:root[data-theme="dark"] .button-secondary:hover{background:#2d3850}
+:root[data-theme="dark"] .page-header h1{background:none;color:#f0eff8;-webkit-text-fill-color:#f0eff8}
+:root[data-theme="dark"] .theme-toggle{background:#252d43;color:#cbd5e5}
+:root[data-theme="dark"] .theme-toggle:hover,:root[data-theme="dark"] .top-icon:hover{background:#303b54;color:#fff}
+:root[data-theme="dark"] .top-icon{color:#aeb8ca}
+:root[data-theme="dark"] .top-avatar-button,:root[data-theme="dark"] .topbar-right .top-avatar-button{background:#283149;border-color:#3a4760;color:#edf1f8}
+:root[data-theme="dark"] .topbar-right .top-avatar-button:hover{background:#33415d;border-color:#536580}
+:root[data-theme="dark"] .profile-card{border-color:#2b3348}
+:root[data-theme="dark"] .profile-card:hover{background:#1b2235}
+:root[data-theme="dark"] .page-footer{color:#929cb1}
+:root[data-theme="dark"] .page-footer .footer-brand{color:#c8d0df}
+:root[data-theme="dark"] .page-footer .footer-separator{color:#69758b}
+:root[data-theme="dark"] .page-footer small{color:#8792a8}
+@media(max-width:720px){.topbar-right{gap:8px}}

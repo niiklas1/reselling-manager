@@ -250,9 +250,7 @@ async function matchShippingProducts(request: Request, env: Env): Promise<Respon
     'Versand-E-Mail. Betreff und Nachricht: ' + candidate.text + '. Absender-Domain: ' + candidate.senderDomain +
     '. Richtung: ' + (candidate.direction === 'incoming' ? 'Einkauf, Paket zum Nutzer' : 'Verkauf, Paket vom Nutzer')
   )
-  const rerankerQueries = cleanCandidates.map(candidate =>
-    'Relevantes Produkt zu dieser Versand-E-Mail finden: ' + candidate.text
-  )
+  const rerankerQueries = cleanCandidates.map(candidate => candidate.text)
   const productTexts = cleanProducts.map(product =>
     'Produkt: ' + product.name + '. Kategorie: ' + product.category + '. Shop oder Verkaufsplattform: ' + product.platform
   )

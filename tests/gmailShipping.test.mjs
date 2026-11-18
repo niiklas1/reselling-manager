@@ -1,9 +1,12 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
+  applyLearnedGmailMatch,
+  createGmailLearningHint,
   identifyCarrier,
   isLikelyShippingEmail,
   isSafeTrackingUrl,
+  mergeGmailLearningHint,
   scoreProductMatch,
   suggestProductMatch,
 } from '../src/lib/gmailShipping.ts'
@@ -55,4 +58,85 @@ test('suggests a product only when its match is clearly stronger', () => {
   ]
   const match = suggestProductMatch(products, 'Your Pokémon Hidden Fates order has shipped')
   assert.equal(match.productId, 'hidden-fates')
+})
+
+test('recognizes carrier handover and pickup updates', () => {
+  assert.equal(isLikelyShippingEmail('Your order has been handed to the carrier', 'The parcel is in transit.'), true)
+  assert.equal(isLikelyShippingEmail('Abholbereit', 'Ihr Paket ist zur Abholung bereit.'), true)
+  assert.equal(isLikelyShippingEmail('Delivery attempt', 'The courier attempted delivery today.'), true)
+})
+
+test('learns only distinctive sender and subject combinations after confirmation', () => {
+  const products = [
+    { id: 'vinyl', name: 'Taylor Swift The Life of a Showgirl Vinyl' },
+    { id: 'pokemon', name: 'Pokémon Hidden Fates Elite Trainer Box' },
+  ]
+  const candidate = {
+    id: 'mail-1:0',
+    messageId: 'mail-1',
+    threadId: 'thread-1',
+    subject: 'Taylor Swift The Life of a Showgirl vinyl has shipped',
+    sender: 'Universal Store <shipping@universal-music.example>',
+    senderDomain: 'universal-music.example',
+    date: '2026-11-18T10:00:00.000Z',
+    direction: 'incoming',
+    carrier: 'Versanddienst',
+    trackingNumber: 'AB123456789',
+    trackingUrl: 'https://shop.example/track/AB123456789',
+    snippet: 'Your order has shipped',
+    matchText: 'Taylor Swift The Life of a Showgirl vinyl has shipped',
+    suggestedProductId: '',
+    matchConfidence: 0,
+  }
+  const hint = createGmailLearningHint(candidate, 'vinyl', products, '2026-11-18T10:01:00.000Z')
+  assert.ok(hint)
+  assert.ok(hint.subjectTokens.includes('taylor'))
+  const saved = mergeGmailLearningHint([], hint)
+  assert.equal(saved.length, 1)
+
+  const future = {
+    ...candidate,
+    id: 'mail-2:0',
+    subject: 'Your Taylor Swift The Life of a Showgirl vinyl is on its way',
+    suggestedProductId: '',
+    matchConfidence: 0,
+  }
+  const suggested = applyLearnedGmailMatch(future, products, saved)
+  assert.equal(suggested.suggestedProductId, 'vinyl')
+  assert.equal(suggested.matchSource, 'Eigene bestätigte Zuordnung')
+})
+
+test('does not learn generic retailer-only mail subjects or ambiguous conflicts', () => {
+  const products = [
+    { id: 'vinyl', name: 'Taylor Swift The Life of a Showgirl Vinyl' },
+    { id: 'pokemon', name: 'Pokémon Hidden Fates Elite Trainer Box' },
+  ]
+  const generic = {
+    id: 'mail-3:0',
+    messageId: 'mail-3',
+    threadId: 'thread-3',
+    subject: 'Your order has shipped',
+    sender: 'Universal Store <shipping@universal-music.example>',
+    senderDomain: 'universal-music.example',
+    date: '2026-11-18T10:00:00.000Z',
+    direction: 'incoming',
+    carrier: 'Versanddienst',
+    trackingNumber: '',
+    trackingUrl: 'https://shop.example/order/123456789',
+    snippet: 'Your order is on its way',
+    matchText: 'Your order has shipped',
+    suggestedProductId: '',
+    matchConfidence: 0,
+  }
+  assert.equal(createGmailLearningHint(generic, 'vinyl', products), null)
+  const a = createGmailLearningHint({
+    ...generic,
+    subject: 'Taylor Swift The Life of a Showgirl vinyl has shipped',
+  }, 'vinyl', products)
+  const b = createGmailLearningHint({
+    ...generic,
+    subject: 'Taylor Swift The Life of a Showgirl vinyl has shipped',
+  }, 'pokemon', products)
+  const ambiguous = applyLearnedGmailMatch(generic, products, [a, b].filter(Boolean))
+  assert.equal(ambiguous.suggestedProductId, '')
 })

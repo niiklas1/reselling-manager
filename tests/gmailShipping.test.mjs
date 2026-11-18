@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import {
   applyLearnedGmailMatch,
   createGmailLearningHint,
+  decodeMimeWords,
   identifyCarrier,
   isLikelyShippingEmail,
   isSafeTrackingUrl,
@@ -23,6 +24,7 @@ test('recognizes common German and international carriers', () => {
   assert.equal(identifyCarrier('https://global.cainiao.com/'), 'Cainiao')
   assert.equal(identifyCarrier('https://www.yunexpress.com/'), 'YunExpress')
   assert.equal(identifyCarrier('https://www.sf-express.com/'), 'SF Express')
+  assert.equal(identifyCarrier('https://www.mondialrelay.fr/'), 'Mondial Relay')
 })
 
 test('accepts explicit tracking endpoints and rejects unsafe or unrelated URLs', () => {
@@ -31,6 +33,7 @@ test('accepts explicit tracking endpoints and rejects unsafe or unrelated URLs',
   assert.equal(isSafeTrackingUrl('javascript:alert(1)'), false)
   assert.equal(isSafeTrackingUrl('https://example.com/about-us'), false)
   assert.equal(isSafeTrackingUrl('https://dhl.attacker.example/track'), false)
+  assert.equal(isSafeTrackingUrl('https://royalmail-attacker.example/track'), false)
   assert.equal(isSafeTrackingUrl('https://example-shop.de/track-shipment/123'), true)
   assert.equal(isSafeTrackingUrl('https://example-shop.de/delivery/offers'), false)
 })
@@ -144,5 +147,40 @@ test('does not learn generic retailer-only mail subjects or ambiguous conflicts'
     subject: 'Taylor Swift The Life of a Showgirl vinyl has shipped',
   }, 'pokemon', products)
   const ambiguous = applyLearnedGmailMatch(generic, products, [a, b].filter(Boolean))
+  assert.equal(ambiguous.suggestedProductId, '')
+})
+
+test('decodes RFC 2047 encoded Gmail headers', () => {
+  assert.equal(decodeMimeWords('=?UTF-8?Q?Versandbest=C3=A4tigung?='), 'Versandbestätigung')
+  assert.equal(decodeMimeWords('Subject =?UTF-8?B?VGF5bG9yIFN3aWZ0?='), 'Subject Taylor Swift')
+})
+
+test('uses the confirmed sender and subject pairing without guessing from sender alone', () => {
+  const products = [
+    { id: 'vinyl', name: 'Taylor Swift The Life of a Showgirl Vinyl' },
+    { id: 'vinyl-duplicate', name: 'Taylor Swift The Life of a Showgirl Vinyl' },
+    { id: 'pokemon', name: 'Pokémon Hidden Fates Elite Trainer Box' },
+  ]
+  const candidate = {
+    id: 'mail-4:0',
+    messageId: 'mail-4',
+    threadId: 'thread-4',
+    subject: 'Taylor Swift The Life of a Showgirl vinyl has shipped',
+    sender: 'Universal Store <shipping@universal-music.example>',
+    senderDomain: 'universal-music.example',
+    date: '2026-11-18T10:00:00.000Z',
+    direction: 'incoming',
+    carrier: 'Versanddienst',
+    trackingNumber: '',
+    trackingUrl: 'https://shop.example/track/123456789',
+    snippet: 'Your order is on its way',
+    matchText: 'Taylor Swift The Life of a Showgirl vinyl has shipped',
+    suggestedProductId: '',
+    matchConfidence: 0,
+  }
+  const hint = createGmailLearningHint(candidate, 'vinyl', products, '2026-11-18T10:01:00.000Z')
+  assert.ok(hint)
+  const conflictingHint = { ...hint, productId: 'vinyl-duplicate' }
+  const ambiguous = applyLearnedGmailMatch(candidate, products, [hint, conflictingHint])
   assert.equal(ambiguous.suggestedProductId, '')
 })

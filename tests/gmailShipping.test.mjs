@@ -241,4 +241,6 @@ test('requests a fresh Google access token for every user-initiated Gmail scan',
   const handler = app.slice(start, end)
   assert.match(handler, /tokenClient\.current\.requestAccessToken\(\{ prompt: '' \}\)/)
   assert.doesNotMatch(handler, /syncWithToken\(accessToken\)/)
+  assert.match(app, /Google blockiert diese App-Adresse/)
+  assert.match(app, /origin_mismatch/)
 })

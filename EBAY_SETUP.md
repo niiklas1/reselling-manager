@@ -1,6 +1,6 @@
 # eBay integration setup
 
-The Reselling Manager eBay integration uses eBay OAuth 2.0, the GraphQL Listing API, and the Sell Fulfillment API. The eBay login happens on eBay's own domain. The app stores only an encrypted refresh token; it never stores an eBay password.
+The Reselling Manager eBay integration uses eBay OAuth 2.0, the GraphQL Listing API, and the Sell Fulfillment API. The eBay login happens on eBay's own domain. The app never stores an eBay password. It encrypts the seller's refresh token and stores the seller's imported listing/order data for the connected Reselling Manager account.
 
 ## 0. Activate Production compliance: marketplace account deletion
 

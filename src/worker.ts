@@ -1379,7 +1379,7 @@ const ebayNotificationKeyCache = new Map<string, { key: string; expiresAt: numbe
 let ebayNotificationAppToken: { value: string; expiresAt: number } | null = null
 
 function decodeBase64Flexible(value: string): Uint8Array {
-  const normalized = value.replace(/-/g, '+').replace(/_/g, '/').replace(/\\s+/g, '')
+  const normalized = value.replace(/-/g, '+').replace(/_/g, '/').replace(/\s+/g, '')
   return decodeBase64(normalized.padEnd(Math.ceil(normalized.length / 4) * 4, '='))
 }
 
@@ -1466,7 +1466,7 @@ async function verifyEbayNotificationSignature(payload: unknown, headerValue: st
   const encodedSignature = safeText(envelope.signature, 12000)
   if (!keyId || !encodedSignature) return false
   const pem = await getEbayNotificationPublicKey(keyId, env)
-  const body = pem.replace(/-----BEGIN PUBLIC KEY-----|-----END PUBLIC KEY-----|\\s+/g, '')
+  const body = pem.replace(/-----BEGIN PUBLIC KEY-----|-----END PUBLIC KEY-----|\s+/g, '')
   const keyBytes = decodeBase64Flexible(body)
   const signature = decodeBase64Flexible(encodedSignature)
   const message = new TextEncoder().encode(JSON.stringify(payload))

@@ -2,6 +2,20 @@
 
 The Reselling Manager eBay integration uses eBay OAuth 2.0, the GraphQL Listing API, and the Sell Fulfillment API. The eBay login happens on eBay's own domain. The app stores only an encrypted refresh token; it never stores an eBay password.
 
+## 0. Activate Production compliance: marketplace account deletion
+
+If eBay labels the Production keyset **Non Compliant** or disabled, configure its **Alerts & Notifications** tab before trying to connect a seller account.
+
+- Select **Marketplace Account Deletion**.
+- Notification endpoint (exact URL): `https://reselling-manager.j6c2njff5r.workers.dev/api/ebay/deletion`
+- Configure an email address that is monitored for endpoint-failure alerts.
+- Create a random 32–80 character URL-safe verification token containing only letters, numbers, `_` and `-`. Store it as the Cloudflare Worker Secret `EBAY_DELETION_VERIFICATION_TOKEN`, then enter the exact same value in eBay's **Verification token** field.
+- Save the configuration. eBay calls the endpoint with a `challenge_code`; the Worker returns the SHA-256 challenge response. Do not use this endpoint as the OAuth RuName.
+
+The Worker also verifies signed deletion notifications using eBay's public-key API. On a verified deletion event, it deletes only the matching eBay connection, imported eBay listings, and imported eBay order rows. It does not delete the user's Reselling Manager account or unrelated inventory. The current eBay integration stores no buyer names, addresses, or email addresses. The account's immutable eBay `userId` is retrieved during OAuth using the additional `commerce.identity.readonly` scope, solely so deletion events can be matched to the correct eBay account.
+
+
+
 ## 1. Create or open the eBay Production keyset
 
 1. Sign in at https://developer.ebay.com/my/keys.
@@ -27,6 +41,7 @@ The app requests only these read scopes:
 
 - `https://api.ebay.com/oauth/api_scope/sell.listing.read`
 - `https://api.ebay.com/oauth/api_scope/sell.fulfillment.readonly`
+- `https://api.ebay.com/oauth/api_scope/commerce.identity.readonly` (to store the immutable seller `userId` for account-deletion matching; no buyer personal data is read)
 
 They allow the current integration to read seller listings and completed order/fulfillment data. The integration does not currently create, edit, end, or relist offers.
 

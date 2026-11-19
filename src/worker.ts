@@ -10,6 +10,7 @@ interface Env {
   EBAY_CLIENT_SECRET?: string
   EBAY_RU_NAME?: string
   EBAY_TOKEN_ENCRYPTION_KEY?: string
+  EBAY_DELETION_VERIFICATION_TOKEN?: string
   TRACKING_17TRACK_API_TOKEN?: string
   TRACKING_17TRACK_WEBHOOK_SECRET?: string
 }
@@ -424,6 +425,7 @@ async function matchShippingProducts(request: Request, env: Env): Promise<Respon
 const EBAY_SCOPES = [
   'https://api.ebay.com/oauth/api_scope/sell.listing.read',
   'https://api.ebay.com/oauth/api_scope/sell.fulfillment.readonly',
+  'https://api.ebay.com/oauth/api_scope/commerce.identity.readonly',
 ]
 const EBAY_GRAPHQL_URL = 'https://graphqlapi.ebay.com/graphql'
 const EBAY_ORDERS_URL = 'https://api.ebay.com/sell/fulfillment/v1/order'
@@ -431,6 +433,7 @@ const EBAY_MARKETPLACE = 'EBAY_DE'
 
 type EbayConnectionRow = {
   user_id: string
+  ebay_user_id: string | null
   refresh_token_ciphertext: string
   refresh_token_iv: string
   refresh_token_expires_at: string | null
@@ -656,6 +659,24 @@ async function exchangeEbayAuthorizationCode(code: string, env: Env): Promise<Eb
   return token
 }
 
+
+async function getEbayAccountIdentity(accessToken: string): Promise<{ userId: string }> {
+  const response = await fetch('https://apiz.ebay.com/commerce/identity/v1/user/', {
+    headers: {
+      Authorization: 'Bearer ' + accessToken,
+      Accept: 'application/json',
+    },
+  })
+  const raw = await response.text()
+  if (!response.ok) {
+    throw new Error('eBay-Konto konnte nicht eindeutig identifiziert werden (' + response.status + '). Bitte verbinde eBay erneut und erteile die angeforderten Berechtigungen.')
+  }
+  const identity = JSON.parse(raw) as { userId?: string }
+  const userId = safeText(identity.userId, 200)
+  if (!userId) throw new Error('eBay hat keine eindeutige Konto-ID zurückgegeben. Die Verbindung wurde aus Datenschutzgründen nicht gespeichert.')
+  return { userId }
+}
+
 async function ebayOAuthCallback(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url)
   const state = url.searchParams.get('state') || ''
@@ -684,9 +705,11 @@ async function ebayOAuthCallback(request: Request, env: Env): Promise<Response> 
     // Consume state before exchanging the one-use authorization code.
     await supabaseAdminJson(env, 'ebay_oauth_states?id=eq.' + encodeURIComponent(pending.id), { method: 'DELETE' })
     const token = await exchangeEbayAuthorizationCode(code, env)
+    const ebayIdentity = await getEbayAccountIdentity(token.access_token)
     const encrypted = await encryptEbayRefreshToken(token.refresh_token!, env)
     await saveEbayConnection(env, {
       user_id: pending.user_id,
+      ebay_user_id: ebayIdentity.userId,
       refresh_token_ciphertext: encrypted.ciphertext,
       refresh_token_iv: encrypted.iv,
       refresh_token_expires_at: new Date(Date.now() + Number(token.refresh_token_expires_in || 47304000) * 1000).toISOString(),
@@ -1343,6 +1366,204 @@ export async function verify17TrackWebhookSignature(rawBody: string, signature: 
   return secureStringEqual(signature.toLowerCase().replace(/^sha256=/, ''), expected)
 }
 
+
+const EBAY_ACCOUNT_DELETION_ENDPOINT = 'https://reselling-manager.j6c2njff5r.workers.dev/api/ebay/deletion'
+const ebayNotificationKeyCache = new Map<string, { key: string; expiresAt: number }>()
+let ebayNotificationAppToken: { value: string; expiresAt: number } | null = null
+
+function decodeBase64Flexible(value: string): Uint8Array {
+  const normalized = value.replace(/-/g, '+').replace(/_/g, '/').replace(/\\s+/g, '')
+  return decodeBase64(normalized.padEnd(Math.ceil(normalized.length / 4) * 4, '='))
+}
+
+function derEcdsaToRaw(signature: Uint8Array, componentLength: number): Uint8Array | null {
+  if (signature.length < 8 || signature[0] !== 0x30) return null
+  let offset = 1
+  let sequenceLength = signature[offset++]
+  if (sequenceLength & 0x80) {
+    const count = sequenceLength & 0x7f
+    if (count < 1 || count > 2 || offset + count > signature.length) return null
+    sequenceLength = 0
+    for (let index = 0; index < count; index++) sequenceLength = (sequenceLength << 8) | signature[offset++]
+  }
+  if (offset + sequenceLength !== signature.length || signature[offset++] !== 0x02) return null
+  const rLength = signature[offset++]
+  let r = signature.slice(offset, offset + rLength)
+  offset += rLength
+  if (signature[offset++] !== 0x02) return null
+  const sLength = signature[offset++]
+  let v = signature.slice(offset, offset + sLength)
+  if (offset + sLength !== signature.length) return null
+  while (r.length > componentLength && r[0] === 0) r = r.slice(1)
+  while (v.length > componentLength && v[0] === 0) v = v.slice(1)
+  if (r.length > componentLength || v.length > componentLength) return null
+  const raw = new Uint8Array(componentLength * 2)
+  raw.set(r, componentLength - r.length)
+  raw.set(v, componentLength * 2 - v.length)
+  return raw
+}
+
+async function getEbayNotificationAppToken(env: Env): Promise<string> {
+  if (ebayNotificationAppToken && ebayNotificationAppToken.expiresAt > Date.now() + 300000) {
+    return ebayNotificationAppToken.value
+  }
+  const { clientId, clientSecret } = ebayConfiguration(env)
+  const response = await fetch('https://api.ebay.com/identity/v1/oauth2/token', {
+    method: 'POST',
+    headers: {
+      Authorization: 'Basic ' + btoa(clientId + ':' + clientSecret),
+      'Content-Type': 'application/x-www-form-urlencoded',
+      Accept: 'application/json',
+    },
+    body: new URLSearchParams({
+      grant_type: 'client_credentials',
+      scope: 'https://api.ebay.com/oauth/api_scope',
+    }).toString(),
+  })
+  const raw = await response.text()
+  if (!response.ok) throw new Error('eBay-Anwendungstoken konnte nicht geladen werden (' + response.status + ').')
+  const token = JSON.parse(raw) as { access_token?: string; expires_in?: number }
+  if (!token.access_token) throw new Error('eBay hat kein Anwendungstoken zurückgegeben.')
+  ebayNotificationAppToken = {
+    value: token.access_token,
+    expiresAt: Date.now() + Math.max(60, Number(token.expires_in || 7200)) * 1000,
+  }
+  return token.access_token
+}
+
+async function getEbayNotificationPublicKey(keyId: string, env: Env): Promise<string> {
+  const cached = ebayNotificationKeyCache.get(keyId)
+  if (cached && cached.expiresAt > Date.now()) return cached.key
+  const appToken = await getEbayNotificationAppToken(env)
+  const response = await fetch('https://api.ebay.com/commerce/notification/v1/public_key/' + encodeURIComponent(keyId), {
+    headers: { Authorization: 'Bearer ' + appToken, Accept: 'application/json' },
+  })
+  const raw = await response.text()
+  if (!response.ok) throw new Error('eBay-Signaturschlüssel konnte nicht geladen werden (' + response.status + ').')
+  const result = JSON.parse(raw) as { key?: string }
+  const key = safeText(result.key, 12000)
+  if (!key.includes('BEGIN PUBLIC KEY')) throw new Error('eBay hat keinen gültigen Signaturschlüssel zurückgegeben.')
+  ebayNotificationKeyCache.set(keyId, { key, expiresAt: Date.now() + 60 * 60 * 1000 })
+  return key
+}
+
+async function verifyEbayNotificationSignature(payload: unknown, headerValue: string, env: Env): Promise<boolean> {
+  if (!headerValue || headerValue.length > 12000) return false
+  let envelope: { kid?: string; signature?: string }
+  try {
+    envelope = JSON.parse(new TextDecoder().decode(decodeBase64Flexible(headerValue))) as typeof envelope
+  } catch {
+    return false
+  }
+  const keyId = safeText(envelope.kid, 300)
+  const encodedSignature = safeText(envelope.signature, 12000)
+  if (!keyId || !encodedSignature) return false
+  const pem = await getEbayNotificationPublicKey(keyId, env)
+  const body = pem.replace(/-----BEGIN PUBLIC KEY-----|-----END PUBLIC KEY-----|\\s+/g, '')
+  const keyBytes = decodeBase64Flexible(body)
+  const signature = decodeBase64Flexible(encodedSignature)
+  const message = new TextEncoder().encode(JSON.stringify(payload))
+
+  // eBay's official Node.js listener SDK verifies JSON.stringify(payload) with ssl3-sha1.
+  // Try RSA and common EC SubjectPublicKeyInfo formats supported by Workers WebCrypto.
+  try {
+    const rsaKey = await crypto.subtle.importKey(
+      'spki',
+      keyBytes,
+      { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-1' },
+      false,
+      ['verify'],
+    )
+    if (await crypto.subtle.verify({ name: 'RSASSA-PKCS1-v1_5' }, rsaKey, signature, message)) return true
+  } catch { /* The eBay key may be an EC key rather than RSA. */ }
+
+  for (const curve of ['P-256', 'P-384', 'P-521'] as const) {
+    try {
+      const ecKey = await crypto.subtle.importKey(
+        'spki',
+        keyBytes,
+        { name: 'ECDSA', namedCurve: curve },
+        false,
+        ['verify'],
+      )
+      const componentLength = curve === 'P-256' ? 32 : curve === 'P-384' ? 48 : 66
+      const rawSignature = signature.length === componentLength * 2
+        ? signature
+        : derEcdsaToRaw(signature, componentLength)
+      if (rawSignature && await crypto.subtle.verify(
+        { name: 'ECDSA', hash: 'SHA-1' },
+        ecKey,
+        rawSignature,
+        message,
+      )) return true
+    } catch { /* Try the next supported curve. */ }
+  }
+  return false
+}
+
+async function ebayDeletionChallenge(request: Request, env: Env): Promise<Response> {
+  const challengeCode = requestUrlChallenge(request)
+  const verificationToken = env.EBAY_DELETION_VERIFICATION_TOKEN || ''
+  if (!challengeCode || challengeCode.length > 1024) return ebayJson({ error: 'Ungültiger challenge_code.' }, 400)
+  if (!/^[A-Za-z0-9_-]{32,80}$/.test(verificationToken)) {
+    return ebayJson({ error: 'eBay-Verification-Token ist nicht korrekt konfiguriert.' }, 503)
+  }
+  const challengeResponse = await sha256Hex(challengeCode + verificationToken + EBAY_ACCOUNT_DELETION_ENDPOINT)
+  return ebayJson({ challengeResponse })
+}
+
+function requestUrlChallenge(request: Request): string {
+  return new URL(request.url).searchParams.get('challenge_code') || ''
+}
+
+async function processEbayAccountDeletion(payload: any, env: Env): Promise<{ deletedConnections: number }> {
+  const ebayUserId = safeText(payload?.notification?.data?.userId, 200)
+  if (!ebayUserId) throw new Error('Die eBay-Löschmeldung enthält keine unveränderliche userId.')
+  const connections = await supabaseAdminJson<Array<{ user_id: string }>>(
+    env,
+    'ebay_connections?select=user_id&ebay_user_id=eq.' + encodeURIComponent(ebayUserId) + '&limit=1000',
+  )
+  // This integration stores the connected seller's immutable eBay userId. It does not
+  // import buyers' names, addresses, emails, or other buyer identifiers into the database.
+  for (const connection of connections) {
+    const appUserId = encodeURIComponent(connection.user_id)
+    await supabaseAdminJson(env, 'ebay_listings?user_id=eq.' + appUserId, { method: 'DELETE' })
+    await supabaseAdminJson(env, 'ebay_orders?user_id=eq.' + appUserId, { method: 'DELETE' })
+    await supabaseAdminJson(env, 'ebay_connections?user_id=eq.' + appUserId, { method: 'DELETE' })
+  }
+  return { deletedConnections: connections.length }
+}
+
+async function ebayAccountDeletionWebhook(request: Request, env: Env): Promise<Response> {
+  if (request.method === 'GET') return ebayDeletionChallenge(request, env)
+  if (request.method !== 'POST') return ebayJson({ error: 'Method not allowed.' }, 405)
+  const rawBody = await request.text()
+  if (!rawBody || rawBody.length > 250000) return ebayJson({ error: 'Ungültiger oder zu großer Benachrichtigungsinhalt.' }, 413)
+  let payload: any
+  try {
+    payload = JSON.parse(rawBody)
+  } catch {
+    return ebayJson({ error: 'Ungültiges JSON.' }, 400)
+  }
+  if (payload?.metadata?.topic !== 'MARKETPLACE_ACCOUNT_DELETION') {
+    return ebayJson({ error: 'Nicht unterstütztes eBay-Benachrichtigungsthema.' }, 400)
+  }
+  try {
+    const valid = await verifyEbayNotificationSignature(
+      payload,
+      request.headers.get('x-ebay-signature') || '',
+      env,
+    )
+    if (!valid) return ebayJson({ error: 'Ungültige eBay-Signatur.' }, 412)
+    await processEbayAccountDeletion(payload, env)
+    return new Response(null, { status: 204, headers: { 'Cache-Control': 'no-store' } })
+  } catch {
+    // Do not acknowledge a verified deletion event if the required data erasure failed.
+    // eBay will retry the notification; no identifiers or payload contents are logged.
+    return ebayJson({ error: 'eBay-Löschmeldung konnte nicht vollständig verarbeitet werden.' }, 503)
+  }
+}
+
 async function shippingWebhook(request: Request, env: Env): Promise<Response> {
   const secret = env.TRACKING_17TRACK_WEBHOOK_SECRET || env.TRACKING_17TRACK_API_TOKEN || ''
   if (!secret) return ebayJson({ error: '17TRACK Webhook-Sicherheitsschlüssel ist nicht eingerichtet.' }, 503)
@@ -1398,7 +1619,8 @@ export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url)
     const origin = request.headers.get('Origin')
-    if (origin && origin !== url.origin) return jsonResponse({ error: 'Origin not allowed' }, 403)
+    const isEbayDeletionEndpoint = url.pathname === '/api/ebay/deletion'
+    if (origin && origin !== url.origin && !isEbayDeletionEndpoint) return jsonResponse({ error: 'Origin not allowed' }, 403)
 
     if (request.method === 'OPTIONS') {
       return new Response(null, {
@@ -1412,6 +1634,9 @@ export default {
       })
     }
 
+    if (url.pathname === '/api/ebay/deletion') {
+      return ebayAccountDeletionWebhook(request, env)
+    }
     if (url.pathname === '/api/ebay/callback' && request.method === 'GET') {
       return ebayOAuthCallback(request, env)
     }

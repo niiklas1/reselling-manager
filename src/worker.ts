@@ -572,12 +572,19 @@ async function decryptEbayRefreshToken(row: EbayConnectionRow, env: Env): Promis
   )
   return new TextDecoder().decode(plaintext)
 }
-function ebayConfiguration(env: Env) {
+function ebayApplicationCredentials(env: Env) {
   const clientId = env.EBAY_CLIENT_ID || ''
   const clientSecret = env.EBAY_CLIENT_SECRET || ''
+  if (!clientId || !clientSecret) {
+    throw new Error('eBay Production App ID oder Cert ID fehlen in den Cloudflare Worker Secrets.')
+  }
+  return { clientId, clientSecret }
+}
+function ebayConfiguration(env: Env) {
+  const { clientId, clientSecret } = ebayApplicationCredentials(env)
   const ruName = env.EBAY_RU_NAME || ''
-  if (!clientId || !clientSecret || !ruName) {
-    throw new Error('eBay ist noch nicht vollständig eingerichtet. Es fehlen Client ID, Client Secret oder RuName als Cloudflare Worker Secrets.')
+  if (!ruName) {
+    throw new Error('Der eBay Production RuName fehlt in den Cloudflare Worker Secrets.')
   }
   return { clientId, clientSecret, ruName }
 }
@@ -1407,7 +1414,7 @@ async function getEbayNotificationAppToken(env: Env): Promise<string> {
   if (ebayNotificationAppToken && ebayNotificationAppToken.expiresAt > Date.now() + 300000) {
     return ebayNotificationAppToken.value
   }
-  const { clientId, clientSecret } = ebayConfiguration(env)
+  const { clientId, clientSecret } = ebayApplicationCredentials(env)
   const response = await fetch('https://api.ebay.com/identity/v1/oauth2/token', {
     method: 'POST',
     headers: {

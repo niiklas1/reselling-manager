@@ -122,8 +122,8 @@ test('eBay deletion endpoint answers the challenge using the configured token an
 test('eBay deletion notifications require a valid signature and delete only matching eBay records', async () => {
   const previousFetch = globalThis.fetch
   const env = makeEnv()
-  const { publicKey, privateKey } = generateKeyPairSync('rsa', {
-    modulusLength: 2048,
+  const { publicKey, privateKey } = generateKeyPairSync('ec', {
+    namedCurve: 'prime256v1',
     publicKeyEncoding: { type: 'spki', format: 'pem' },
     privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
   })
@@ -137,7 +137,7 @@ test('eBay deletion notifications require a valid signature and delete only matc
       data: { userId: 'immutable-ebay-user-id' },
     },
   }
-  const signer = createSign('RSA-SHA1')
+  const signer = createSign('SHA1')
   signer.update(JSON.stringify(payload))
   signer.end()
   const envelope = {
